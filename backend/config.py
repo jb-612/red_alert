@@ -1,0 +1,18 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    database_url: str = "sqlite:///data/alerts.db"
+    tzofar_api_url: str = "https://api.tzevaadom.co.il/alerts-history"
+    oref_history_url: str = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
+    oref_referer: str = "https://www.oref.org.il/"
+    csv_url: str = (
+        "https://raw.githubusercontent.com/dleshem/israel-alerts-data/main/israel-alerts.csv"
+    )
+    cors_origins: list[str] = ["http://localhost:5173"]
+    debug: bool = False
+
+    model_config = {"env_prefix": "RED_ALERT_"}
+
+
+settings = Settings()
