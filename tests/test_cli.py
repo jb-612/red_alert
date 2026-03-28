@@ -2,9 +2,10 @@
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 
-from backend.cli import build_parser, seed_categories
+from backend.cli import build_parser, cmd_backfill, seed_categories
 from backend.models.category import AlertCategory
 
 
@@ -47,7 +48,7 @@ def test_seed_categories(db):
     # Check a specific one
     cat1 = db.query(AlertCategory).filter_by(id=1).first()
     assert cat1.name_en == "Rocket and missile fire"
-    assert cat1.name_he == "ירי רקטות וטילים"
+    assert cat1.name_he == "\u05d9\u05e8\u05d9 \u05e8\u05e7\u05d8\u05d5\u05ea \u05d5\u05d8\u05d9\u05dc\u05d9\u05dd"
 
 
 def test_seed_categories_idempotent(db):
@@ -57,3 +58,48 @@ def test_seed_categories_idempotent(db):
     assert first == 9
     assert second == 0
     assert db.query(AlertCategory).count() == 9
+
+
+# --- WI-2.1: HTTP error handling tests ---
+
+
+def test_backfill_download_failure_http_error() -> None:
+    """cmd_backfill exits with code 1 when HTTP status error occurs during download."""
+    mock_response = httpx.Response(status_code=500, request=httpx.Request("GET", "http://test"))
+    with (
+        patch("backend.cli.init_db"),
+        patch("backend.cli.SessionLocal"),
+        patch("httpx.Client") as mock_cls,
+    ):
+        mock_instance = mock_cls.return_value.__enter__.return_value
+        mock_instance.get.side_effect = httpx.HTTPStatusError(
+            "Server error", request=httpx.Request("GET", "http://test"), response=mock_response
+        )
+        with pytest.raises(SystemExit, match="1"):
+            cmd_backfill()
+
+
+def test_backfill_download_failure_connect_error() -> None:
+    """cmd_backfill exits with code 1 when connection fails during download."""
+    with (
+        patch("backend.cli.init_db"),
+        patch("backend.cli.SessionLocal"),
+        patch("httpx.Client") as mock_cls,
+    ):
+        mock_instance = mock_cls.return_value.__enter__.return_value
+        mock_instance.get.side_effect = httpx.ConnectError("Connection refused")
+        with pytest.raises(SystemExit, match="1"):
+            cmd_backfill()
+
+
+def test_backfill_download_failure_timeout() -> None:
+    """cmd_backfill exits with code 1 when download times out."""
+    with (
+        patch("backend.cli.init_db"),
+        patch("backend.cli.SessionLocal"),
+        patch("httpx.Client") as mock_cls,
+    ):
+        mock_instance = mock_cls.return_value.__enter__.return_value
+        mock_instance.get.side_effect = httpx.TimeoutException("Timed out")
+        with pytest.raises(SystemExit, match="1"):
+            cmd_backfill()

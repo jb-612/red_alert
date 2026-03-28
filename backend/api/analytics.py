@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import statistics
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Integer, case, cast, distinct, func, select
 from sqlalchemy.orm import Session
 
+from backend.api.filters import apply_filters
 from backend.database import get_db
+from backend.db_compat import extract_dow, extract_hour
 from backend.models.alert import Alert
+from backend.models.category import AlertCategory
 from backend.models.location import Location
 from backend.schemas.alert import (
     AnomalyDay,
@@ -34,11 +36,9 @@ from backend.schemas.alert import (
     RegionAnalytics,
     SleepScoreResponse,
     TimelineBucket,
+    TopLocationEntry,
     WeekdayRank,
 )
-
-if TYPE_CHECKING:
-    from sqlalchemy import Select
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -47,24 +47,6 @@ ROCKET_CATEGORY = 1
 NIGHT_START_HOUR = 22
 NIGHT_END_HOUR = 7
 MIN_DATES_FOR_STATS = 2
-
-
-def _apply_filters(
-    stmt: Select,
-    from_date: date | None,
-    to_date: date | None,
-    categories: list[int] | None,
-    location: str | None,
-) -> Select:
-    if from_date:
-        stmt = stmt.where(Alert.alert_datetime >= datetime.combine(from_date, datetime.min.time()))
-    if to_date:
-        stmt = stmt.where(Alert.alert_datetime <= datetime.combine(to_date, datetime.max.time()))
-    if categories:
-        stmt = stmt.where(Alert.category.in_(categories))
-    if location:
-        stmt = stmt.where(Alert.location_name.contains(location))
-    return stmt
 
 
 def _empty_kpi() -> KpiResponse:
@@ -82,7 +64,7 @@ def _get_alert_dates(db: Session, filters: tuple) -> list[date]:
     """Return sorted list of distinct dates that have alerts matching filters."""
     day_expr = func.date(Alert.alert_datetime)
     stmt = select(day_expr.label("day")).group_by("day").order_by("day")
-    stmt = _apply_filters(stmt, *filters)
+    stmt = apply_filters(stmt, *filters)
     rows = db.execute(stmt).all()
     return [date.fromisoformat(str(r.day)) for r in rows]
 
@@ -94,6 +76,12 @@ def _longest_quiet_days(db: Session, filters: tuple) -> int:
     return max((dates[i] - dates[i - 1]).days for i in range(1, len(dates)))
 
 
+def _lookup_category_name_en(db: Session, category_id: int) -> str:
+    """Look up the English name for a category from the alert_categories table."""
+    row = db.execute(select(AlertCategory.name_en).where(AlertCategory.id == category_id)).first()
+    return row[0] if row else ""
+
+
 def _query_kpi_parts(db: Session, filters: tuple) -> dict:
     day_expr = func.date(Alert.alert_datetime)
 
@@ -103,7 +91,7 @@ def _query_kpi_parts(db: Session, filters: tuple) -> dict:
         .order_by(func.count().desc())
         .limit(1)
     )
-    peak_stmt = _apply_filters(peak_stmt, *filters)
+    peak_stmt = apply_filters(peak_stmt, *filters)
     peak_row = db.execute(peak_stmt).first()
 
     cat_stmt = (
@@ -112,18 +100,18 @@ def _query_kpi_parts(db: Session, filters: tuple) -> dict:
         .order_by(func.count().desc())
         .limit(1)
     )
-    cat_stmt = _apply_filters(cat_stmt, *filters)
+    cat_stmt = apply_filters(cat_stmt, *filters)
     cat_row = db.execute(cat_stmt).first()
 
     range_stmt = select(
         func.min(Alert.alert_datetime).label("earliest"),
         func.max(Alert.alert_datetime).label("latest"),
     )
-    range_stmt = _apply_filters(range_stmt, *filters)
+    range_stmt = apply_filters(range_stmt, *filters)
     range_row = db.execute(range_stmt).first()
 
     loc_stmt = select(func.count(distinct(Alert.location_name)))
-    loc_stmt = _apply_filters(loc_stmt, *filters)
+    loc_stmt = apply_filters(loc_stmt, *filters)
     unique_locations = db.scalar(loc_stmt) or 0
 
     return {
@@ -140,13 +128,16 @@ def _build_kpi(db: Session, filters: tuple, total_alerts: int) -> KpiResponse:
     cat_row = parts["cat_row"]
     range_row = parts["range_row"]
 
+    # name is Hebrew (from category_desc), name_en from alert_categories table
+    name_en = _lookup_category_name_en(db, cat_row.category)
+
     return KpiResponse(
         total_alerts=total_alerts,
         peak_day=PeakDay(date=str(peak_row.day), count=peak_row.cnt),
         most_active_category=MostActiveCategory(
             category=cat_row.category,
             name=cat_row.category_desc or "",
-            name_en=cat_row.category_desc or "",
+            name_en=name_en,
             percentage=round(cat_row.cnt / total_alerts * 100, 1),
         ),
         longest_quiet_days=_longest_quiet_days(db, filters),
@@ -165,14 +156,14 @@ def kpi(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> KpiResponse:
     """Summary KPI data for the dashboard header."""
     filters = (from_date, to_date, categories, location)
 
     total_stmt = select(func.count()).select_from(Alert)
-    total_stmt = _apply_filters(total_stmt, *filters)
+    total_stmt = apply_filters(total_stmt, *filters)
     total_alerts = db.scalar(total_stmt) or 0
 
     if total_alerts == 0:
@@ -186,28 +177,27 @@ def hourly_heatmap(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> list[HourlyHeatmapCell]:
     """Hour-of-day x day-of-week heatmap.
 
     Reveals the "hottest" alert times and best sleep windows.
-    Weekday 0=Monday, 6=Sunday.
+    Weekday 0=Sunday (Israel week), 6=Saturday.
     """
     stmt = select(
-        func.strftime("%H", Alert.alert_datetime).label("hour"),
-        func.strftime("%w", Alert.alert_datetime).label("dow_raw"),
+        extract_hour(Alert.alert_datetime).label("hour"),
+        extract_dow(Alert.alert_datetime).label("dow_raw"),
         func.count().label("count"),
     ).group_by("hour", "dow_raw")
-    stmt = _apply_filters(stmt, from_date, to_date, categories, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location)
 
     rows = db.execute(stmt).all()
     results = []
     for r in rows:
         hour = int(r.hour) if r.hour else 0
-        # Convert SQLite %w (0=Sunday) to ISO weekday (0=Monday)
-        dow_raw = int(r.dow_raw) if r.dow_raw else 0
-        weekday = (dow_raw + 6) % 7
+        # SQLite %w already uses 0=Sunday, matching Israel week convention
+        weekday = int(r.dow_raw) if r.dow_raw else 0
         results.append(HourlyHeatmapCell(hour=hour, weekday=weekday, count=r.count))
 
     return results
@@ -229,7 +219,7 @@ def _query_sparklines(
         .where(Alert.location_name.in_(location_names))
         .group_by(Alert.location_name, "day")
     )
-    spark_stmt = _apply_filters(spark_stmt, from_date, to_date, None, None)
+    spark_stmt = apply_filters(spark_stmt, from_date, to_date, categories=None, location=None)
 
     sparklines: dict[str, list[dict]] = {}
     for r in db.execute(spark_stmt).all():
@@ -237,14 +227,14 @@ def _query_sparklines(
     return sparklines
 
 
-@router.get("/top-locations")
+@router.get("/top-locations", response_model=list[TopLocationEntry])
 def top_locations(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
-) -> list[dict]:
+) -> list[TopLocationEntry]:
     """Top-N locations with daily sparkline data."""
     filters = (from_date, to_date, categories, None)
 
@@ -252,7 +242,7 @@ def top_locations(
         Alert.location_name,
         func.count().label("total"),
     ).group_by(Alert.location_name)
-    top_stmt = _apply_filters(top_stmt, *filters)
+    top_stmt = apply_filters(top_stmt, *filters)
     top_stmt = top_stmt.order_by(func.count().desc()).limit(limit)
     top_rows = db.execute(top_stmt).all()
     top_names = [r.location_name for r in top_rows]
@@ -263,11 +253,11 @@ def top_locations(
     sparklines = _query_sparklines(db, top_names, from_date, to_date)
 
     return [
-        {
-            "location_name": r.location_name,
-            "total": r.total,
-            "sparkline": sorted(sparklines.get(r.location_name, []), key=lambda x: x["day"]),
-        }
+        TopLocationEntry(
+            location_name=r.location_name,
+            total=r.total,
+            sparkline=sorted(sparklines.get(r.location_name, []), key=lambda x: x["day"]),
+        )
         for r in top_rows
     ]
 
@@ -297,7 +287,7 @@ def analytics_by_region(
     # Base filter: alerts in these locations
     base = select(Alert).where(Alert.location_name.in_(location_names))
     filters = (from_date, to_date, categories, None)
-    base = _apply_filters(base, *filters)
+    base = apply_filters(base, *filters)
     sub = base.subquery()
 
     total = db.scalar(select(func.count()).select_from(sub)) or 0
@@ -319,7 +309,7 @@ def analytics_by_region(
         .order_by(func.count().desc())
         .limit(10)
     )
-    top_stmt = _apply_filters(top_stmt, *filters)
+    top_stmt = apply_filters(top_stmt, *filters)
     top_rows = db.execute(top_stmt).all()
 
     # Category breakdown
@@ -329,7 +319,7 @@ def analytics_by_region(
         .group_by(Alert.category, Alert.category_desc)
         .order_by(func.count().desc())
     )
-    cat_stmt = _apply_filters(cat_stmt, *filters)
+    cat_stmt = apply_filters(cat_stmt, *filters)
     cat_rows = db.execute(cat_stmt).all()
 
     # Timeline (daily)  # noqa: ERA001
@@ -340,7 +330,7 @@ def analytics_by_region(
         .group_by("period")
         .order_by("period")
     )
-    tl_stmt = _apply_filters(tl_stmt, *filters)
+    tl_stmt = apply_filters(tl_stmt, *filters)
     tl_rows = db.execute(tl_stmt).all()
 
     return RegionAnalytics(
@@ -364,7 +354,7 @@ def analytics_by_region(
 
 def _query_disturbed_nights(db: Session, filters: tuple) -> set[date]:
     """Return set of night-start dates that had alerts in the 22:00-06:59 window."""
-    hour_expr = cast(func.strftime("%H", Alert.alert_datetime), Integer)
+    hour_expr = cast(extract_hour(Alert.alert_datetime), Integer)
     night_date_expr = case(
         (hour_expr >= NIGHT_START_HOUR, func.date(Alert.alert_datetime)),
         else_=func.date(Alert.alert_datetime, "-1 day"),
@@ -375,7 +365,7 @@ def _query_disturbed_nights(db: Session, filters: tuple) -> set[date]:
         .where((hour_expr >= NIGHT_START_HOUR) | (hour_expr < NIGHT_END_HOUR))
         .group_by("night_date")
     )
-    stmt = _apply_filters(stmt, *filters)
+    stmt = apply_filters(stmt, *filters)
 
     rows = db.execute(stmt).all()
     return {date.fromisoformat(str(r.night_date)) for r in rows}
@@ -397,7 +387,7 @@ def _build_night_range(
             func.min(Alert.alert_datetime).label("earliest"),
             func.max(Alert.alert_datetime).label("latest"),
         )
-        range_stmt = _apply_filters(range_stmt, *filters)
+        range_stmt = apply_filters(range_stmt, *filters)
         row = db.execute(range_stmt).first()
         if not row or not row.earliest:
             return []
@@ -417,7 +407,7 @@ def sleep_score(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> SleepScoreResponse:
     """Sleep quality score based on alert-free nights (22:00-06:59)."""
@@ -453,9 +443,9 @@ _WEEKDAY_NAMES = [
 
 def _query_weekday_counts(db: Session, filters: tuple) -> dict[int, int]:
     """Return {weekday: alert_count} for all 7 days (0=Sunday)."""
-    dow_expr = cast(func.strftime("%w", Alert.alert_datetime), Integer)
+    dow_expr = cast(extract_dow(Alert.alert_datetime), Integer)
     stmt = select(dow_expr.label("dow"), func.count().label("cnt")).group_by("dow")
-    stmt = _apply_filters(stmt, *filters)
+    stmt = apply_filters(stmt, *filters)
     rows = db.execute(stmt).all()
     counts = dict.fromkeys(range(7), 0)
     for r in rows:
@@ -471,13 +461,13 @@ def _query_hot_hours(db: Session, filters: tuple, top_n: int) -> list[LocationHo
         .order_by(func.count().desc())
         .limit(top_n)
     )
-    top_stmt = _apply_filters(top_stmt, *filters)
+    top_stmt = apply_filters(top_stmt, *filters)
     top_names = [r.location_name for r in db.execute(top_stmt).all()]
 
     if not top_names:
         return []
 
-    hour_expr = cast(func.strftime("%H", Alert.alert_datetime), Integer)
+    hour_expr = cast(extract_hour(Alert.alert_datetime), Integer)
     hour_stmt = (
         select(
             Alert.location_name,
@@ -487,7 +477,7 @@ def _query_hot_hours(db: Session, filters: tuple, top_n: int) -> list[LocationHo
         .where(Alert.location_name.in_(top_names))
         .group_by(Alert.location_name, "hour")
     )
-    hour_stmt = _apply_filters(hour_stmt, *filters)
+    hour_stmt = apply_filters(hour_stmt, *filters)
     rows = db.execute(hour_stmt).all()
 
     best: dict[str, tuple[int, int]] = {}
@@ -508,7 +498,7 @@ def best_weekdays(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     top_locations: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> BestWeekdaysResponse:
@@ -628,7 +618,7 @@ def quiet_streaks(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     top_n: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> QuietStreaksResponse:
@@ -646,7 +636,7 @@ def _query_daily_counts(db: Session, filters: tuple) -> list[tuple[str, int]]:
     """Return (date_str, count) pairs for each day with alerts."""
     day_expr = func.date(Alert.alert_datetime)
     stmt = select(day_expr.label("day"), func.count().label("cnt")).group_by("day").order_by("day")
-    stmt = _apply_filters(stmt, *filters)
+    stmt = apply_filters(stmt, *filters)
     rows = db.execute(stmt).all()
     return [(str(r.day), r.cnt) for r in rows]
 
@@ -718,7 +708,7 @@ def anomalies(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     threshold: float = Query(2.0, ge=1.0, le=4.0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -739,10 +729,10 @@ def _build_period_summary(
     """Build a summary of alerts for a single date range."""
     filters = (from_date, to_date, categories, location)
 
-    total = db.scalar(_apply_filters(select(func.count()).select_from(Alert), *filters)) or 0
+    total = db.scalar(apply_filters(select(func.count()).select_from(Alert), *filters)) or 0
 
     unique_locs = (
-        db.scalar(_apply_filters(select(func.count(distinct(Alert.location_name))), *filters)) or 0
+        db.scalar(apply_filters(select(func.count(distinct(Alert.location_name))), *filters)) or 0
     )
 
     cat_stmt = (
@@ -750,7 +740,7 @@ def _build_period_summary(
         .group_by(Alert.category, Alert.category_desc)
         .order_by(func.count().desc())
     )
-    cat_rows = db.execute(_apply_filters(cat_stmt, *filters)).all()
+    cat_rows = db.execute(apply_filters(cat_stmt, *filters)).all()
 
     loc_stmt = (
         select(Alert.location_name, func.count().label("count"))
@@ -758,10 +748,10 @@ def _build_period_summary(
         .order_by(func.count().desc())
         .limit(10)
     )
-    loc_rows = db.execute(_apply_filters(loc_stmt, *filters)).all()
+    loc_rows = db.execute(apply_filters(loc_stmt, *filters)).all()
 
     tl_rows = db.execute(
-        _apply_filters(
+        apply_filters(
             select(
                 func.date(Alert.alert_datetime).label("period"),
                 func.count().label("count"),
@@ -811,29 +801,13 @@ def compare(
     period_b_from: date = Query(...),
     period_b_to: date = Query(...),
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> ComparisonResponse:
     """Compare metrics between two date ranges."""
     a = _build_period_summary(db, period_a_from, period_a_to, categories, location)
     b = _build_period_summary(db, period_b_from, period_b_to, categories, location)
     return ComparisonResponse(period_a=a, period_b=b, delta=_compute_delta(a, b))
-
-
-def _apply_date_location_filters(
-    stmt: Select,
-    from_date: date | None,
-    to_date: date | None,
-    location: str | None,
-) -> Select:
-    """Apply date and location filters (no category — pre-alert is fixed)."""
-    if from_date:
-        stmt = stmt.where(Alert.alert_datetime >= datetime.combine(from_date, datetime.min.time()))
-    if to_date:
-        stmt = stmt.where(Alert.alert_datetime <= datetime.combine(to_date, datetime.max.time()))
-    if location:
-        stmt = stmt.where(Alert.location_name.contains(location))
-    return stmt
 
 
 def _query_prealert_totals(
@@ -845,7 +819,7 @@ def _query_prealert_totals(
         .where(Alert.category == PRE_ALERT_CATEGORY)
         .group_by(Alert.location_name)
     )
-    stmt = _apply_date_location_filters(stmt, from_date, to_date, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location)
     return {r.location_name: r.cnt for r in db.execute(stmt).all()}
 
 
@@ -931,7 +905,7 @@ def _build_correlation_response(
 def prealert_correlation(
     from_date: date | None = None,
     to_date: date | None = None,
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     window_minutes: int = Query(30, ge=1, le=60),
     min_prealerts: int = Query(5, ge=1),
     limit: int = Query(20, ge=1, le=100),

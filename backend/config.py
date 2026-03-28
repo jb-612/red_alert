@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     tzofar_api_url: str = "https://api.tzevaadom.co.il/alerts-history"
     oref_history_url: str = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
     oref_referer: str = "https://www.oref.org.il/"
+    oref_user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     csv_url: str = (
         "https://raw.githubusercontent.com/dleshem/israel-alerts-data/main/israel-alerts.csv"
     )

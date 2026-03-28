@@ -1,40 +1,15 @@
 from datetime import datetime
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backend.database import Base, get_db
-from backend.main import app
 from backend.models.alert import Alert
-
-engine = create_engine(
-    "sqlite:///:memory:",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-Base.metadata.create_all(bind=engine)
-TestSession = sessionmaker(bind=engine)
-
-
-def override_get_db():
-    db = TestSession()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
+from backend.models.category import AlertCategory
+from backend.models.location import Location
 
 
 @pytest.fixture(autouse=True)
-def seed_data():
+def seed_data(db_session):
     """Insert sample alerts before each test, clean up after."""
-    db = TestSession()
     alerts = [
         Alert(
             alert_datetime=datetime(2023, 10, 7, 6, 30),
@@ -65,21 +40,22 @@ def seed_data():
             source="test",
         ),
     ]
-    db.add_all(alerts)
-    db.commit()
+    db_session.add_all(alerts)
+    db_session.commit()
     yield
-    db.query(Alert).delete()
-    db.commit()
-    db.close()
+    db_session.query(Alert).delete()
+    db_session.query(Location).delete()
+    db_session.query(AlertCategory).delete()
+    db_session.commit()
 
 
-def test_health():
+def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_list_alerts():
+def test_list_alerts(client):
     response = client.get("/api/alerts")
     assert response.status_code == 200
     data = response.json()
@@ -87,27 +63,27 @@ def test_list_alerts():
     assert len(data["items"]) == 4
 
 
-def test_list_alerts_filter_by_category():
+def test_list_alerts_filter_by_category(client):
     response = client.get("/api/alerts?categories=1")
     data = response.json()
     assert data["total"] == 3
     assert all(item["category"] == 1 for item in data["items"])
 
 
-def test_list_alerts_filter_by_location():
+def test_list_alerts_filter_by_location(client):
     response = client.get("/api/alerts?location=תל אביב")
     data = response.json()
     assert data["total"] == 2
 
 
-def test_list_alerts_filter_by_date_range():
+def test_list_alerts_filter_by_date_range(client):
     response = client.get("/api/alerts?from_date=2024-01-01&to_date=2024-12-31")
     data = response.json()
     assert data["total"] == 1
     assert data["items"][0]["location_name"] == "באר שבע"
 
 
-def test_list_alerts_pagination():
+def test_list_alerts_pagination(client):
     response = client.get("/api/alerts?page=1&page_size=2")
     data = response.json()
     assert data["total"] == 4
@@ -116,7 +92,7 @@ def test_list_alerts_pagination():
     assert data["page_size"] == 2
 
 
-def test_timeline_daily():
+def test_timeline_daily(client):
     response = client.get("/api/alerts/timeline?granularity=day")
     assert response.status_code == 200
     data = response.json()
@@ -124,7 +100,7 @@ def test_timeline_daily():
     assert len(data["buckets"]) >= 1
 
 
-def test_by_category():
+def test_by_category(client):
     response = client.get("/api/alerts/by-category")
     assert response.status_code == 200
     data = response.json()
@@ -132,7 +108,7 @@ def test_by_category():
     assert data[0]["count"] >= data[1]["count"]  # sorted desc
 
 
-def test_by_location():
+def test_by_location(client):
     response = client.get("/api/alerts/by-location")
     assert response.status_code == 200
     data = response.json()
@@ -142,7 +118,7 @@ def test_by_location():
     assert data[0]["count"] == 2
 
 
-def test_hourly_heatmap():
+def test_hourly_heatmap(client):
     response = client.get("/api/analytics/hourly-heatmap")
     assert response.status_code == 200
     data = response.json()
@@ -151,9 +127,12 @@ def test_hourly_heatmap():
         assert 0 <= cell["hour"] <= 23
         assert 0 <= cell["weekday"] <= 6
         assert cell["count"] >= 1
+    # Verify 0=Sunday convention: Oct 7 2023 is Saturday=6
+    saturday_cells = [c for c in data if c["weekday"] == 6]
+    assert len(saturday_cells) >= 1
 
 
-def test_top_locations():
+def test_top_locations(client):
     response = client.get("/api/analytics/top-locations?limit=5")
     assert response.status_code == 200
     data = response.json()
@@ -162,7 +141,7 @@ def test_top_locations():
     assert "total" in data[0]
 
 
-def test_kpi():
+def test_kpi(client):
     response = client.get("/api/analytics/kpi")
     assert response.status_code == 200
     data = response.json()
@@ -186,7 +165,7 @@ def test_kpi():
     assert data["longest_quiet_days"] == 100
 
 
-def test_kpi_with_category_filter():
+def test_kpi_with_category_filter(client):
     response = client.get("/api/analytics/kpi?categories=2")
     assert response.status_code == 200
     data = response.json()

@@ -1,4 +1,12 @@
-from backend.ingestion.tzofar_client import _parse_response, strip_bom
+from unittest.mock import patch
+
+import httpx
+
+from backend.ingestion.tzofar_client import (
+    _parse_response,
+    ingest_tzofar_alerts,
+)
+from backend.ingestion.utils import strip_bom
 
 
 def test_strip_bom_removes_bom():
@@ -19,14 +27,14 @@ def test_parse_response_extracts_alerts():
     json_text = """[
         {
             "date": "2024-01-15T10:30:00",
-            "name": "תל אביב - מרכז",
+            "name": "\u05ea\u05dc \u05d0\u05d1\u05d9\u05d1 - \u05de\u05e8\u05db\u05d6",
             "category": 1,
-            "title": "ירי רקטות וטילים"
+            "title": "\u05d9\u05e8\u05d9 \u05e8\u05e7\u05d8\u05d5\u05ea \u05d5\u05d8\u05d9\u05dc\u05d9\u05dd"
         }
     ]"""
     alerts = _parse_response(json_text)
     assert len(alerts) == 1
-    assert alerts[0]["location_name"] == "תל אביב - מרכז"
+    assert alerts[0]["location_name"] == "\u05ea\u05dc \u05d0\u05d1\u05d9\u05d1 - \u05de\u05e8\u05db\u05d6"
     assert alerts[0]["category"] == 1
     assert alerts[0]["source"] == "tzofar"
 
@@ -52,10 +60,46 @@ def test_parse_response_preserves_hebrew():
     json_text = """[
         {
             "date": "2024-01-15T10:30:00",
-            "name": "ירושלים",
+            "name": "\u05d9\u05e8\u05d5\u05e9\u05dc\u05d9\u05dd",
             "category": 1,
-            "title": "ירי רקטות וטילים"
+            "title": "\u05d9\u05e8\u05d9 \u05e8\u05e7\u05d8\u05d5\u05ea \u05d5\u05d8\u05d9\u05dc\u05d9\u05dd"
         }
     ]"""
     alerts = _parse_response(json_text)
-    assert alerts[0]["location_name"] == "ירושלים"
+    assert alerts[0]["location_name"] == "\u05d9\u05e8\u05d5\u05e9\u05dc\u05d9\u05dd"
+
+
+# --- WI-2.1: HTTP error handling tests ---
+
+
+def test_ingest_handles_http_error(db: "Session") -> None:  # noqa: F821
+    """ingest_tzofar_alerts returns 0 when HTTP status error occurs."""
+    mock_response = httpx.Response(status_code=500, request=httpx.Request("GET", "http://test"))
+    with patch(
+        "backend.ingestion.tzofar_client.fetch_tzofar_alerts",
+        side_effect=httpx.HTTPStatusError(
+            "Server error", request=httpx.Request("GET", "http://test"), response=mock_response
+        ),
+    ):
+        result = ingest_tzofar_alerts(db)
+    assert result == 0
+
+
+def test_ingest_handles_connect_error(db: "Session") -> None:  # noqa: F821
+    """ingest_tzofar_alerts returns 0 when connection fails."""
+    with patch(
+        "backend.ingestion.tzofar_client.fetch_tzofar_alerts",
+        side_effect=httpx.ConnectError("Connection refused"),
+    ):
+        result = ingest_tzofar_alerts(db)
+    assert result == 0
+
+
+def test_ingest_handles_timeout(db: "Session") -> None:  # noqa: F821
+    """ingest_tzofar_alerts returns 0 when request times out."""
+    with patch(
+        "backend.ingestion.tzofar_client.fetch_tzofar_alerts",
+        side_effect=httpx.TimeoutException("Request timed out"),
+    ):
+        result = ingest_tzofar_alerts(db)
+    assert result == 0

@@ -10,7 +10,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    alert_datetime: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    alert_datetime: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     location_name: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[int] = mapped_column(Integer, nullable=False)
     category_desc: Mapped[str | None] = mapped_column(Text, nullable=True)

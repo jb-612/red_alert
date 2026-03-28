@@ -4,12 +4,12 @@ from pydantic import BaseModel, Field
 
 
 class AlertResponse(BaseModel):
-    id: int
-    alert_datetime: datetime
-    location_name: str
-    category: int
-    category_desc: str | None = None
-    source: str
+    id: int = Field(description="Unique alert record ID")
+    alert_datetime: datetime = Field(description="When the alert was issued")
+    location_name: str = Field(description="Hebrew location name as received from source")
+    category: int = Field(description="Alert category ID (e.g. 1=rockets, 14=pre-alert)")
+    category_desc: str | None = Field(default=None, description="Hebrew category description")
+    source: str = Field(description="Data source: csv_backfill, tzofar, or oref")
 
     model_config = {"from_attributes": True}
 
@@ -32,19 +32,19 @@ class TimelineResponse(BaseModel):
 
 
 class CategoryCount(BaseModel):
-    category: int
-    category_desc: str
-    count: int
+    category: int = Field(description="Alert category ID")
+    category_desc: str = Field(description="Hebrew category description")
+    count: int = Field(description="Number of alerts in this category")
 
 
 class LocationCount(BaseModel):
-    location_name: str
-    count: int
+    location_name: str = Field(description="Hebrew location name")
+    count: int = Field(description="Number of alerts at this location")
 
 
 class HourlyHeatmapCell(BaseModel):
     hour: int = Field(ge=0, le=23)
-    weekday: int = Field(ge=0, le=6, description="0=Monday, 6=Sunday")
+    weekday: int = Field(ge=0, le=6, description="0=Sunday (Israel week), 6=Saturday")
     count: int
 
 
@@ -194,3 +194,35 @@ class PrealertCorrelationResponse(BaseModel):
     overall_followed: int
     overall_probability: float
     locations: list[PrealertLocationStat]
+
+
+# --- Top Locations (analytics endpoint) ---
+
+
+class SparklinePoint(BaseModel):
+    day: str = Field(description="Date string (YYYY-MM-DD)")
+    count: int = Field(description="Alert count on this day")
+
+
+class TopLocationEntry(BaseModel):
+    location_name: str = Field(description="Hebrew location name")
+    total: int = Field(description="Total alert count for this location")
+    sparkline: list[dict] = Field(description="Daily alert counts for sparkline chart")
+
+
+# --- Location Hierarchy ---
+
+
+class HierarchyCity(BaseModel):
+    name: str = Field(description="Hebrew city name")
+    name_en: str | None = Field(default=None, description="English city name")
+    lat: float | None = Field(default=None, description="Latitude")
+    lng: float | None = Field(default=None, description="Longitude")
+    alert_count: int = Field(description="Total alerts for this city")
+
+
+class HierarchyZone(BaseModel):
+    zone: str = Field(description="Hebrew zone name")
+    zone_en: str | None = Field(default=None, description="English zone name")
+    total_alerts: int = Field(description="Sum of alerts across all cities in zone")
+    cities: list[HierarchyCity] = Field(description="Cities within this zone")

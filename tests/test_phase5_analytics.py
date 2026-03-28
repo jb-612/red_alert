@@ -5,7 +5,8 @@ from datetime import datetime
 import pytest
 
 from backend.models.alert import Alert
-from tests.test_api import TestSession, client
+from backend.models.category import AlertCategory
+from backend.models.location import Location
 
 # ---------------------------------------------------------------------------
 # Seed data design for Phase 5:
@@ -162,20 +163,20 @@ def _build_correlation_alerts() -> list[Alert]:
 
 
 @pytest.fixture(autouse=True)
-def seed_data():
+def seed_data(db_session):
     """Insert Phase 5 test alerts, clean up after."""
-    db = TestSession()
     all_alerts = (
         _build_anomaly_alerts()
         + _build_comparison_extra_alerts()
         + _build_correlation_alerts()
     )
-    db.add_all(all_alerts)
-    db.commit()
+    db_session.add_all(all_alerts)
+    db_session.commit()
     yield
-    db.query(Alert).delete()
-    db.commit()
-    db.close()
+    db_session.query(Alert).delete()
+    db_session.query(Location).delete()
+    db_session.query(AlertCategory).delete()
+    db_session.commit()
 
 
 # ===================== Anomaly Detection =====================
@@ -184,7 +185,7 @@ def seed_data():
 class TestAnomalyDetection:
     """Tests for GET /api/analytics/anomalies."""
 
-    def test_anomaly_basic_structure(self):
+    def test_anomaly_basic_structure(self, client):
         r = client.get(
             "/api/analytics/anomalies"
             "?from_date=2024-01-01&to_date=2024-01-08"
@@ -197,7 +198,7 @@ class TestAnomalyDetection:
         assert "total_days_analyzed" in data
         assert "anomalies" in data
 
-    def test_anomaly_detects_spike(self):
+    def test_anomaly_detects_spike(self, client):
         """Jan 6 has 20 alerts vs ~2/day baseline → detected as 'high'."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -210,7 +211,7 @@ class TestAnomalyDetection:
         assert spike["direction"] == "high"
         assert spike["z_score"] > 2.0
 
-    def test_anomaly_threshold_parameter(self):
+    def test_anomaly_threshold_parameter(self, client):
         """Lower threshold finds more anomalies."""
         r_strict = client.get(
             "/api/analytics/anomalies"
@@ -224,7 +225,7 @@ class TestAnomalyDetection:
         loose = r_loose.json()["anomalies"]
         assert len(loose) >= len(strict)
 
-    def test_anomaly_uniform_no_anomalies(self):
+    def test_anomaly_uniform_no_anomalies(self, client):
         """Jan 1-5 all have 2 alerts → stdev=0 → no anomalies."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -234,7 +235,7 @@ class TestAnomalyDetection:
         assert data["std_daily_count"] == 0.0
         assert len(data["anomalies"]) == 0
 
-    def test_anomaly_insufficient_data(self):
+    def test_anomaly_insufficient_data(self, client):
         """Single day → stdev undefined → no anomalies."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -243,7 +244,7 @@ class TestAnomalyDetection:
         data = r.json()
         assert len(data["anomalies"]) == 0
 
-    def test_anomaly_with_category_filter(self):
+    def test_anomaly_with_category_filter(self, client):
         """Category filter scopes daily counts."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -254,7 +255,7 @@ class TestAnomalyDetection:
         assert data["std_daily_count"] == 0.0
         assert len(data["anomalies"]) == 0
 
-    def test_anomaly_with_location_filter(self):
+    def test_anomaly_with_location_filter(self, client):
         """Location filter scopes daily counts."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -265,7 +266,7 @@ class TestAnomalyDetection:
         # Beer Sheva only has alerts on Jan 7-8 (2/day), uniform
         assert data["std_daily_count"] == 0.0
 
-    def test_anomaly_sorted_by_zscore(self):
+    def test_anomaly_sorted_by_zscore(self, client):
         """Anomalies sorted by |z_score| descending."""
         r = client.get(
             "/api/analytics/anomalies"
@@ -283,7 +284,7 @@ class TestAnomalyDetection:
 class TestPeriodComparison:
     """Tests for GET /api/analytics/compare."""
 
-    def test_compare_basic_structure(self):
+    def test_compare_basic_structure(self, client):
         r = client.get(
             "/api/analytics/compare"
             "?period_a_from=2024-01-01&period_a_to=2024-01-05"
@@ -301,7 +302,7 @@ class TestPeriodComparison:
             assert "top_locations" in period
             assert "timeline" in period
 
-    def test_compare_delta_positive(self):
+    def test_compare_delta_positive(self, client):
         """Period B (Jan 6-10) has more alerts than period A (Jan 1-5)."""
         r = client.get(
             "/api/analytics/compare"
@@ -313,7 +314,7 @@ class TestPeriodComparison:
         assert data["delta"]["total_alerts_pct"] is not None
         assert data["delta"]["total_alerts_pct"] > 0
 
-    def test_compare_delta_negative(self):
+    def test_compare_delta_negative(self, client):
         """Swap periods → negative delta."""
         r = client.get(
             "/api/analytics/compare"
@@ -323,7 +324,7 @@ class TestPeriodComparison:
         data = r.json()
         assert data["delta"]["total_alerts_delta"] < 0
 
-    def test_compare_zero_division(self):
+    def test_compare_zero_division(self, client):
         """Period A has 0 alerts → delta_pct is None."""
         r = client.get(
             "/api/analytics/compare"
@@ -334,7 +335,7 @@ class TestPeriodComparison:
         assert data["period_a"]["total_alerts"] == 0
         assert data["delta"]["total_alerts_pct"] is None
 
-    def test_compare_both_empty(self):
+    def test_compare_both_empty(self, client):
         """Both periods empty → all zeros."""
         r = client.get(
             "/api/analytics/compare"
@@ -346,7 +347,7 @@ class TestPeriodComparison:
         assert data["period_b"]["total_alerts"] == 0
         assert data["delta"]["total_alerts_delta"] == 0
 
-    def test_compare_with_category_filter(self):
+    def test_compare_with_category_filter(self, client):
         """Category filter applied to both periods."""
         r = client.get(
             "/api/analytics/compare"
@@ -359,7 +360,7 @@ class TestPeriodComparison:
         assert data["period_a"]["total_alerts"] == 0
         assert data["period_b"]["total_alerts"] == 4
 
-    def test_compare_with_location_filter(self):
+    def test_compare_with_location_filter(self, client):
         """Location filter applied to both periods."""
         r = client.get(
             "/api/analytics/compare"
@@ -373,7 +374,7 @@ class TestPeriodComparison:
         assert data["period_a"]["total_alerts"] == 0
         assert data["period_b"]["total_alerts"] > 0
 
-    def test_compare_timeline_within_bounds(self):
+    def test_compare_timeline_within_bounds(self, client):
         """Timeline buckets fall within respective period bounds."""
         r = client.get(
             "/api/analytics/compare"
@@ -392,7 +393,7 @@ class TestPeriodComparison:
 class TestPrealertCorrelation:
     """Tests for GET /api/analytics/prealert-correlation."""
 
-    def test_prealert_basic_structure(self):
+    def test_prealert_basic_structure(self, client):
         r = client.get(
             "/api/analytics/prealert-correlation"
             "?from_date=2024-02-01&to_date=2024-02-28"
@@ -405,7 +406,7 @@ class TestPrealertCorrelation:
         assert "overall_probability" in data
         assert "locations" in data
 
-    def test_prealert_match_within_window(self):
+    def test_prealert_match_within_window(self, client):
         """Tel Aviv: 2 prealerts, both followed by cat 1 within 30min."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -422,7 +423,7 @@ class TestPrealertCorrelation:
         assert ta["followed_by_actual"] == 2
         assert ta["probability"] == 1.0
 
-    def test_prealert_no_match_outside_window(self):
+    def test_prealert_no_match_outside_window(self, client):
         """Haifa: cat 14 at 11:00, cat 1 at 12:00 → 60min > 30min window."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -438,7 +439,7 @@ class TestPrealertCorrelation:
         assert haifa["followed_by_actual"] == 0
         assert haifa["probability"] == 0.0
 
-    def test_prealert_same_location_required(self):
+    def test_prealert_same_location_required(self, client):
         """Beer Sheva: cat 14 at 15:00, but cat 1 at 15:10 is Tel Aviv → no match."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -454,7 +455,7 @@ class TestPrealertCorrelation:
         assert bs["followed_by_actual"] == 0
         assert bs["probability"] == 0.0
 
-    def test_prealert_overall_probability(self):
+    def test_prealert_overall_probability(self, client):
         """Overall: 4 prealerts, 2 followed → 0.5."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -466,7 +467,7 @@ class TestPrealertCorrelation:
         assert data["overall_followed"] == 2
         assert data["overall_probability"] == 0.5
 
-    def test_prealert_min_prealerts_filter(self):
+    def test_prealert_min_prealerts_filter(self, client):
         """min_prealerts=2 excludes Haifa (1) and Beer Sheva (1)."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -479,7 +480,7 @@ class TestPrealertCorrelation:
         assert "חיפה" not in names
         assert "באר שבע" not in names
 
-    def test_prealert_wider_window_finds_more(self):
+    def test_prealert_wider_window_finds_more(self, client):
         """window=60 should match Haifa (60min gap) too."""
         r = client.get(
             "/api/analytics/prealert-correlation"
@@ -497,7 +498,7 @@ class TestPrealertCorrelation:
         # Overall should now be 3/4 = 0.75
         assert data["overall_followed"] == 3
 
-    def test_prealert_empty_range(self):
+    def test_prealert_empty_range(self, client):
         """No cat 14 alerts in range → empty response."""
         r = client.get(
             "/api/analytics/prealert-correlation"

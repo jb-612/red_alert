@@ -10,15 +10,19 @@ import argparse
 import csv
 import io
 import logging
+import sys
 import time
 from pathlib import Path
 
+import httpx
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.database import SessionLocal, init_db
 from backend.ingestion.csv_loader import load_csv_bulk
 from backend.ingestion.locations_loader import load_locations
+from backend.models.alert import Alert
 from backend.models.category import AlertCategory
 
 logger = logging.getLogger(__name__)
@@ -37,6 +41,7 @@ CATEGORIES = [
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(prog="red-alert", description="Red Alert CLI")
     sub = parser.add_subparsers(dest="command")
 
@@ -66,31 +71,50 @@ def seed_categories(db: Session) -> int:
     return inserted
 
 
+def _read_csv_text(csv_path: str | None) -> str:
+    """Read CSV text from a local file or download from configured URL."""
+    if csv_path:
+        logger.info("Reading CSV from local file: %s", csv_path)
+        with Path(csv_path).open(encoding="utf-8") as f:
+            return f.read()
+
+    url = settings.csv_url
+    logger.info("Downloading CSV from %s", url)
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            response = client.get(url)
+            response.raise_for_status()
+    except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+        logger.error("Failed to download CSV: %s", exc)
+        sys.exit(1)
+    return response.text
+
+
+def _log_top_locations(db: Session) -> None:
+    """Log the top 5 locations by alert count."""
+    stmt = (
+        select(Alert.location_name, func.count().label("cnt"))
+        .group_by(Alert.location_name)
+        .order_by(func.count().desc())
+        .limit(5)
+    )
+    rows = db.execute(stmt).all()
+    logger.info("Top 5 locations by alert count:")
+    for r in rows:
+        logger.info("  %s: %d", r.location_name, r.cnt)
+
+
 def cmd_backfill(csv_path: str | None = None) -> None:
     """Download CSV from configured URL (or read from local file) and load into DB."""
     init_db()
     db = SessionLocal()
 
     try:
-        if csv_path:
-            logger.info("Reading CSV from local file: %s", csv_path)
-            with Path(csv_path).open(encoding="utf-8") as f:
-                csv_text = f.read()
-        else:
-            import httpx
-
-            url = settings.csv_url
-            logger.info("Downloading CSV from %s", url)
-            with httpx.Client(timeout=120.0) as client:
-                response = client.get(url)
-                response.raise_for_status()
-            csv_text = response.text
+        csv_text = _read_csv_text(csv_path)
 
         # Count CSV rows
         reader = csv.DictReader(io.StringIO(csv_text))
-        row_count = 0
-        for _ in reader:
-            row_count += 1
+        row_count = sum(1 for _ in reader)
         logger.info("CSV rows: %d", row_count)
 
         t0 = time.time()
@@ -100,27 +124,13 @@ def cmd_backfill(csv_path: str | None = None) -> None:
         logger.info("Inserted %d alert records in %.1f seconds", inserted, elapsed)
         logger.info("CSV rows: %d | Alert records: %d | Time: %.1fs", row_count, inserted, elapsed)
 
-        # Sample query: top 5 locations
-        from sqlalchemy import func, select
-
-        from backend.models.alert import Alert
-
-        stmt = (
-            select(Alert.location_name, func.count().label("cnt"))
-            .group_by(Alert.location_name)
-            .order_by(func.count().desc())
-            .limit(5)
-        )
-        rows = db.execute(stmt).all()
-        logger.info("Top 5 locations by alert count:")
-        for r in rows:
-            logger.info("  %s: %d", r.location_name, r.cnt)
-
+        _log_top_locations(db)
     finally:
         db.close()
 
 
 def cmd_seed_categories() -> None:
+    """Seed the alert categories table."""
     init_db()
     db = SessionLocal()
     try:
@@ -142,12 +152,14 @@ def cmd_load_locations(cities_path: str | None = None) -> None:
 
 
 def cmd_serve(host: str, port: int) -> None:
+    """Start the uvicorn development server."""
     import uvicorn
 
     uvicorn.run("backend.main:app", host=host, port=port, reload=False)
 
 
 def main() -> None:
+    """CLI entry point."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = build_parser()
     args = parser.parse_args()

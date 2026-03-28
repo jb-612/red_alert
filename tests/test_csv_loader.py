@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from backend.ingestion.csv_loader import load_csv_from_text, parse_csv_row
+from backend.ingestion.csv_loader import load_csv_bulk, load_csv_from_text, parse_csv_row
 from backend.models.alert import Alert
 from tests.conftest import SAMPLE_CSV_TEXT
 
@@ -81,3 +81,17 @@ def test_load_csv_from_text_deduplicates(db):
     assert first_load == 5
     assert second_load == 0
     assert db.query(Alert).count() == 5
+
+
+def test_load_csv_from_text_strips_bom(db):
+    """CSV text with UTF-8 BOM prefix should still parse correctly."""
+    bom_csv = "\ufeff" + SAMPLE_CSV_TEXT
+    inserted = load_csv_from_text(db, bom_csv)
+    assert inserted == 5
+
+
+def test_load_csv_bulk_strips_bom(db):
+    """Bulk loader handles UTF-8 BOM prefix."""
+    bom_csv = "\ufeff" + SAMPLE_CSV_TEXT
+    inserted = load_csv_bulk(db, bom_csv)
+    assert inserted == 5

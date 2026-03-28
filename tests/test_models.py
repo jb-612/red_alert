@@ -66,11 +66,16 @@ def test_category_creation(db):
     assert result.name_en == "Rocket and missile fire"
 
 
+def test_alert_datetime_column_has_timezone():
+    """Alert.alert_datetime column should be timezone-aware."""
+    col_type = Alert.__table__.c.alert_datetime.type
+    assert col_type.timezone is True
+
+
 def test_dedup_index_prevents_duplicates(db):
     """The unique index on (alert_datetime, location_name, category) must prevent duplicates."""
-    from sqlalchemy.exc import IntegrityError
-
     import pytest
+    from sqlalchemy.exc import IntegrityError
 
     alert1 = Alert(
         alert_datetime=datetime(2023, 10, 7, 6, 30),

@@ -1,4 +1,3 @@
-import codecs
 import json
 import logging
 from datetime import datetime
@@ -8,14 +7,10 @@ from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.ingestion.deduplication import alert_exists
+from backend.ingestion.utils import strip_bom
 from backend.models.alert import Alert
 
 logger = logging.getLogger(__name__)
-
-
-def strip_bom(text: str) -> str:
-    """Strip UTF-8 BOM from response text."""
-    return codecs.decode(text.encode(), "utf-8-sig")
 
 
 def fetch_tzofar_alerts(url: str | None = None) -> list[dict]:
@@ -57,7 +52,11 @@ def _parse_response(text: str) -> list[dict]:
 
 def ingest_tzofar_alerts(db: Session, url: str | None = None) -> int:
     """Fetch from Tzofar API and insert deduped alerts into database."""
-    raw_alerts = fetch_tzofar_alerts(url)
+    try:
+        raw_alerts = fetch_tzofar_alerts(url)
+    except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+        logger.warning("Tzofar API request failed: %s", exc)
+        return 0
     inserted = 0
 
     for alert_data in raw_alerts:

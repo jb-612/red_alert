@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import TYPE_CHECKING
+from datetime import date  # noqa: TC003
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-if TYPE_CHECKING:
-    from sqlalchemy import Select
-
+from backend.api.filters import apply_filters
 from backend.database import get_db
+from backend.db_compat import extract_month, extract_week
 from backend.models.alert import Alert
 from backend.models.location import Location
 from backend.schemas.alert import (
@@ -26,36 +24,19 @@ from backend.schemas.alert import (
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
-def _apply_filters(
-    stmt: Select,
-    from_date: date | None,
-    to_date: date | None,
-    categories: list[int] | None,
-    location: str | None,
-) -> Select:
-    if from_date:
-        stmt = stmt.where(Alert.alert_datetime >= datetime.combine(from_date, datetime.min.time()))
-    if to_date:
-        stmt = stmt.where(Alert.alert_datetime <= datetime.combine(to_date, datetime.max.time()))
-    if categories:
-        stmt = stmt.where(Alert.category.in_(categories))
-    if location:
-        stmt = stmt.where(Alert.location_name.contains(location))
-    return stmt
-
-
 @router.get("", response_model=AlertListResponse)
 def list_alerts(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> AlertListResponse:
+    """List alerts with optional filtering and pagination."""
     base = select(Alert)
-    base = _apply_filters(base, from_date, to_date, categories, location)
+    base = apply_filters(base, from_date, to_date, categories, location)
 
     total = db.scalar(select(func.count()).select_from(base.subquery()))
     items = db.scalars(
@@ -75,19 +56,20 @@ def alert_timeline(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     granularity: str = Query("day", pattern="^(day|week|month)$"),
     db: Session = Depends(get_db),
 ) -> TimelineResponse:
+    """Alert timeline bucketed by day, week, or month."""
     if granularity == "day":
         period_expr = func.date(Alert.alert_datetime)
     elif granularity == "week":
-        period_expr = func.strftime("%Y-W%W", Alert.alert_datetime)
+        period_expr = extract_week(Alert.alert_datetime)
     else:
-        period_expr = func.strftime("%Y-%m", Alert.alert_datetime)
+        period_expr = extract_month(Alert.alert_datetime)
 
     stmt = select(period_expr.label("period"), func.count().label("count")).group_by("period")
-    stmt = _apply_filters(stmt, from_date, to_date, categories, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location)
     stmt = stmt.order_by("period")
 
     rows = db.execute(stmt).all()
@@ -101,15 +83,16 @@ def alert_timeline(
 def alerts_by_category(
     from_date: date | None = None,
     to_date: date | None = None,
-    location: str | None = None,
+    location: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> list[CategoryCount]:
+    """Alert counts grouped by category."""
     stmt = select(
         Alert.category,
         Alert.category_desc,
         func.count().label("count"),
     ).group_by(Alert.category, Alert.category_desc)
-    stmt = _apply_filters(stmt, from_date, to_date, None, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location)
     stmt = stmt.order_by(func.count().desc())
 
     rows = db.execute(stmt).all()
@@ -127,11 +110,12 @@ def alerts_by_location(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> list[LocationCount]:
+    """Alert counts grouped by location."""
     stmt = select(
         Alert.location_name,
         func.count().label("count"),
     ).group_by(Alert.location_name)
-    stmt = _apply_filters(stmt, from_date, to_date, categories, None)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location=None)
     stmt = stmt.order_by(func.count().desc()).limit(limit)
 
     rows = db.execute(stmt).all()
@@ -159,7 +143,7 @@ def alerts_geo(
         .group_by(Alert.location_name)
     )
 
-    stmt = _apply_filters(stmt, from_date, to_date, categories, None)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location=None)
 
     rows = db.execute(stmt).all()
     results = []

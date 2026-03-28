@@ -5,17 +5,15 @@ from datetime import datetime
 import pytest
 
 from backend.models.alert import Alert
-
-# Reuse the same engine/session/client as test_api.py to avoid
-# conflicting app.dependency_overrides[get_db] at module level.
-from tests.test_api import TestSession, client
+from backend.models.category import AlertCategory
+from backend.models.location import Location
 
 # ---------------------------------------------------------------------------
 # Seed data layout (all dates in January 2024):
 #
 # Jan 10 (Wed) 23:00 — night alert (disturbs night of Jan 10)
 # Jan 11 (Thu) 14:00 — daytime only (night of Jan 11 is peaceful)
-# Jan 12 (Fri) 02:00 — post-midnight (disturbs night of Jan 11... wait)
+# Jan 13 (Sat) 02:00 — post-midnight (disturbs night of Jan 11... wait)
 #   Actually: 02:00 on Jan 12 maps to night of Jan 11 → disturbs it
 #   So let's adjust: we want Jan 11 night peaceful, so no alerts 22:00 Jan 11 - 06:59 Jan 12.
 #
@@ -120,21 +118,21 @@ SEED_ALERTS = [
 
 
 @pytest.fixture(autouse=True)
-def seed_data():
+def seed_data(db_session):
     """Insert lifestyle analytics test alerts, clean up after."""
-    db = TestSession()
-    db.add_all([Alert(
+    db_session.add_all([Alert(
         alert_datetime=a.alert_datetime,
         location_name=a.location_name,
         category=a.category,
         category_desc=a.category_desc,
         source=a.source,
     ) for a in SEED_ALERTS])
-    db.commit()
+    db_session.commit()
     yield
-    db.query(Alert).delete()
-    db.commit()
-    db.close()
+    db_session.query(Alert).delete()
+    db_session.query(Location).delete()
+    db_session.query(AlertCategory).delete()
+    db_session.commit()
 
 
 # ===================== Sleep Score =====================
@@ -143,7 +141,7 @@ def seed_data():
 class TestSleepScore:
     """Tests for GET /api/analytics/sleep-score."""
 
-    def test_sleep_score_basic(self):
+    def test_sleep_score_basic(self, client):
         """Score with known mix of disturbed/peaceful nights."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -151,16 +149,6 @@ class TestSleepScore:
         )
         assert r.status_code == 200
         data = r.json()
-        # 11 nights (Jan 10-19 inclusive, last night starts Jan 19 but
-        #   to_date=Jan 20 means we include night of Jan 19)
-        # Wait — need to think about this carefully.
-        # Nights in range: night of Jan 10, 11, 12, ..., 19
-        # That's 10 nights (Jan 10 through Jan 19).
-        # But also could include night of Jan 20 if to_date=Jan 20.
-        # Let's define: nights from from_date through to_date-1 (since
-        # night of Jan 20 ends Jan 21 which is outside range).
-        # Actually the endpoint will define this — let's just check
-        # the score is reasonable and structure is correct.
         assert "score" in data
         assert "total_nights" in data
         assert "peaceful_nights" in data
@@ -169,7 +157,7 @@ class TestSleepScore:
         assert 0 <= data["score"] <= 100
         assert data["peaceful_nights"] <= data["total_nights"]
 
-    def test_sleep_score_trend_entries(self):
+    def test_sleep_score_trend_entries(self, client):
         """Trend array has one entry per night in range."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -181,7 +169,7 @@ class TestSleepScore:
             assert "date" in entry
             assert "peaceful" in entry
 
-    def test_sleep_score_night_of_jan10_disturbed(self):
+    def test_sleep_score_night_of_jan10_disturbed(self, client):
         """Night of Jan 10 is disturbed (alert at 23:00)."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -193,7 +181,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == 0
         assert data["score"] == 0.0
 
-    def test_sleep_score_night_of_jan11_peaceful(self):
+    def test_sleep_score_night_of_jan11_peaceful(self, client):
         """Night of Jan 11 is peaceful (only a 14:00 daytime alert)."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -204,7 +192,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == 1
         assert data["score"] == 100.0
 
-    def test_sleep_score_night_of_jan12_disturbed_by_post_midnight(self):
+    def test_sleep_score_night_of_jan12_disturbed_by_post_midnight(self, client):
         """Night of Jan 12 is disturbed by 03:30 alert on Jan 13."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -215,7 +203,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == 0
         assert data["score"] == 0.0
 
-    def test_sleep_score_boundary_2200_is_nighttime(self):
+    def test_sleep_score_boundary_2200_is_nighttime(self, client):
         """Alert at exactly 22:00 counts as nighttime (disturbs the night)."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -224,7 +212,7 @@ class TestSleepScore:
         data = r.json()
         assert data["peaceful_nights"] == 0
 
-    def test_sleep_score_boundary_0700_is_daytime(self):
+    def test_sleep_score_boundary_0700_is_daytime(self, client):
         """Alert at exactly 07:00 is daytime, does NOT disturb the night."""
         # Night of Jan 19 has no alerts (07:00 on Jan 20 is daytime)
         r = client.get(
@@ -235,7 +223,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == 1
         assert data["score"] == 100.0
 
-    def test_sleep_score_with_location_filter(self):
+    def test_sleep_score_with_location_filter(self, client):
         """Location filter scopes which alerts count."""
         # Only באר שבע alerts: Jan 13 15:00 and Jan 20 10:00 (both daytime)
         r = client.get(
@@ -247,7 +235,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == data["total_nights"]
         assert data["score"] == 100.0
 
-    def test_sleep_score_with_category_filter(self):
+    def test_sleep_score_with_category_filter(self, client):
         """Category filter scopes which alerts count."""
         # Category 2 alerts: Jan 13 15:00, Jan 20 10:00 (both daytime)
         r = client.get(
@@ -258,7 +246,7 @@ class TestSleepScore:
         assert data["peaceful_nights"] == data["total_nights"]
         assert data["score"] == 100.0
 
-    def test_sleep_score_empty_range(self):
+    def test_sleep_score_empty_range(self, client):
         """Date range with no alerts returns all-peaceful."""
         r = client.get(
             "/api/analytics/sleep-score"
@@ -276,7 +264,7 @@ class TestSleepScore:
 class TestBestWeekdays:
     """Tests for GET /api/analytics/best-weekdays."""
 
-    def test_best_weekdays_returns_seven_days(self):
+    def test_best_weekdays_returns_seven_days(self, client):
         """Always returns all 7 weekdays even if some have 0 alerts."""
         r = client.get("/api/analytics/best-weekdays")
         assert r.status_code == 200
@@ -285,21 +273,21 @@ class TestBestWeekdays:
         weekday_ids = {d["weekday"] for d in data["weekdays"]}
         assert weekday_ids == {0, 1, 2, 3, 4, 5, 6}
 
-    def test_best_weekdays_ranking_order(self):
+    def test_best_weekdays_ranking_order(self, client):
         """Weekdays ranked ascending by alert count (safest first)."""
         r = client.get("/api/analytics/best-weekdays")
         data = r.json()
         counts = [d["alert_count"] for d in data["weekdays"]]
         assert counts == sorted(counts)
 
-    def test_best_weekdays_rank_values(self):
+    def test_best_weekdays_rank_values(self, client):
         """Rank values are 1-7."""
         r = client.get("/api/analytics/best-weekdays")
         data = r.json()
         ranks = sorted(d["rank"] for d in data["weekdays"])
         assert ranks == [1, 2, 3, 4, 5, 6, 7]
 
-    def test_best_weekdays_names_correct(self):
+    def test_best_weekdays_names_correct(self, client):
         """Each weekday has the correct English name."""
         expected = {0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday",
                     4: "Thursday", 5: "Friday", 6: "Saturday"}
@@ -308,7 +296,7 @@ class TestBestWeekdays:
         for d in data["weekdays"]:
             assert d["weekday_name"] == expected[d["weekday"]]
 
-    def test_best_weekdays_saturday_most_alerts(self):
+    def test_best_weekdays_saturday_most_alerts(self, client):
         """Saturday has the most alerts (4) in our seed data."""
         r = client.get("/api/analytics/best-weekdays")
         data = r.json()
@@ -316,7 +304,7 @@ class TestBestWeekdays:
         assert sat["alert_count"] == 4
         assert sat["rank"] == 7  # worst day
 
-    def test_best_weekdays_zero_alert_days(self):
+    def test_best_weekdays_zero_alert_days(self, client):
         """Sunday, Tuesday, Friday have 0 alerts."""
         r = client.get("/api/analytics/best-weekdays")
         data = r.json()
@@ -324,7 +312,7 @@ class TestBestWeekdays:
             day = next(d for d in data["weekdays"] if d["weekday"] == day_id)
             assert day["alert_count"] == 0
 
-    def test_best_weekdays_with_category_filter(self):
+    def test_best_weekdays_with_category_filter(self, client):
         """Category filter reduces counts."""
         # Category 2 only: Jan 13 (Sat) and Jan 20 (Sat) → Sat=2, rest=0
         r = client.get("/api/analytics/best-weekdays?categories=2")
@@ -334,7 +322,7 @@ class TestBestWeekdays:
         non_sat = [d for d in data["weekdays"] if d["weekday"] != 6]
         assert all(d["alert_count"] == 0 for d in non_sat)
 
-    def test_best_weekdays_hot_hours_structure(self):
+    def test_best_weekdays_hot_hours_structure(self, client):
         """Hot hours list has expected structure."""
         r = client.get("/api/analytics/best-weekdays?top_locations=3")
         data = r.json()
@@ -344,7 +332,7 @@ class TestBestWeekdays:
             assert 0 <= hh["peak_hour"] <= 23
             assert hh["alert_count"] >= 1
 
-    def test_best_weekdays_hot_hours_correct(self):
+    def test_best_weekdays_hot_hours_correct(self, client):
         """Tel Aviv peak hour is 23 (one alert at 23:00, one at 03:30, one at 22:00)."""
         r = client.get("/api/analytics/best-weekdays?top_locations=3")
         data = r.json()
@@ -361,7 +349,7 @@ class TestBestWeekdays:
 class TestQuietStreaks:
     """Tests for GET /api/analytics/quiet-streaks."""
 
-    def test_quiet_streaks_basic(self):
+    def test_quiet_streaks_basic(self, client):
         """Returns expected structure."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -373,7 +361,7 @@ class TestQuietStreaks:
         assert "longest_streak" in data
         assert "top_streaks" in data
 
-    def test_quiet_streaks_longest(self):
+    def test_quiet_streaks_longest(self, client):
         """Longest streak is Jan 16-19 (4 days between Jan 15 and Jan 20)."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -386,7 +374,7 @@ class TestQuietStreaks:
         assert longest["start_date"] == "2024-01-16"
         assert longest["end_date"] == "2024-01-19"
 
-    def test_quiet_streaks_no_current_when_last_day_has_alerts(self):
+    def test_quiet_streaks_no_current_when_last_day_has_alerts(self, client):
         """Current streak is None when to_date has alerts."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -396,7 +384,7 @@ class TestQuietStreaks:
         # Jan 20 has alerts, so no current streak
         assert data["current_streak"] is None
 
-    def test_quiet_streaks_current_when_trailing_quiet(self):
+    def test_quiet_streaks_current_when_trailing_quiet(self, client):
         """Current streak exists when to_date is after last alert."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -409,7 +397,7 @@ class TestQuietStreaks:
         assert data["current_streak"]["start_date"] == "2024-01-21"
         assert data["current_streak"]["end_date"] == "2024-01-25"
 
-    def test_quiet_streaks_top_ordering(self):
+    def test_quiet_streaks_top_ordering(self, client):
         """Top streaks sorted descending by days."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -419,7 +407,7 @@ class TestQuietStreaks:
         days_list = [s["days"] for s in data["top_streaks"]]
         assert days_list == sorted(days_list, reverse=True)
 
-    def test_quiet_streaks_top_n_limit(self):
+    def test_quiet_streaks_top_n_limit(self, client):
         """Respects top_n parameter."""
         r = client.get(
             "/api/analytics/quiet-streaks"
@@ -428,7 +416,7 @@ class TestQuietStreaks:
         data = r.json()
         assert len(data["top_streaks"]) <= 1
 
-    def test_quiet_streaks_consecutive_days_no_streak(self):
+    def test_quiet_streaks_consecutive_days_no_streak(self, client):
         """Consecutive alert days produce no quiet streak between them."""
         # Jan 10 and Jan 11 both have alerts → 0 quiet days between them
         r = client.get(
@@ -439,7 +427,7 @@ class TestQuietStreaks:
         # No streaks of length > 0 between consecutive alert days
         assert all(s["days"] > 0 for s in data["top_streaks"])
 
-    def test_quiet_streaks_with_location_filter(self):
+    def test_quiet_streaks_with_location_filter(self, client):
         """Location filter changes which days count as alert days."""
         # באר שבע only has alerts on Jan 13 and Jan 20
         # Gap between them: Jan 14-19 = 6 quiet days
@@ -452,7 +440,7 @@ class TestQuietStreaks:
         assert longest is not None
         assert longest["days"] == 6
 
-    def test_quiet_streaks_empty_range(self):
+    def test_quiet_streaks_empty_range(self, client):
         """Range with no alerts — everything is quiet."""
         r = client.get(
             "/api/analytics/quiet-streaks"

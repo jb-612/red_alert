@@ -3,12 +3,11 @@ import io
 import logging
 from datetime import datetime
 
-import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.config import settings
 from backend.ingestion.deduplication import alert_exists
+from backend.ingestion.utils import strip_bom
 from backend.models.alert import Alert
 
 logger = logging.getLogger(__name__)
@@ -52,18 +51,6 @@ def parse_csv_row(row: dict) -> list[dict]:
     return results
 
 
-def load_csv_from_url(db: Session, url: str | None = None) -> int:
-    """Download CSV from URL and load into database."""
-    url = url or settings.csv_url
-    logger.info("Downloading CSV from %s", url)
-
-    with httpx.Client(timeout=120.0) as client:
-        response = client.get(url)
-        response.raise_for_status()
-
-    return load_csv_from_text(db, response.text)
-
-
 def _deduplicate_row(db: Session, row: dict) -> list[Alert]:
     """Parse a CSV row and return only non-duplicate Alert objects."""
     return [
@@ -75,6 +62,7 @@ def _deduplicate_row(db: Session, row: dict) -> list[Alert]:
 
 def load_csv_from_text(db: Session, text: str) -> int:
     """Parse CSV text and load into database with deduplication."""
+    text = strip_bom(text)
     reader = csv.DictReader(io.StringIO(text))
     total_inserted = 0
     batch: list[Alert] = []
@@ -103,6 +91,7 @@ def load_csv_bulk(db: Session, csv_text: str) -> int:
     The unique index on (alert_datetime, location_name, category) handles
     deduplication at the DB level, avoiding per-row SELECT checks.
     """
+    csv_text = strip_bom(csv_text)
     reader = csv.DictReader(io.StringIO(csv_text))
     total_inserted = 0
     batch: list[dict] = []
