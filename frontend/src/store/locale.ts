@@ -4,8 +4,10 @@ type Lang = 'en' | 'he'
 type Dir = 'ltr' | 'rtl'
 
 function resolveInitialLang(): Lang {
-  const stored = localStorage.getItem('lang')
-  if (stored === 'he' || stored === 'en') return stored
+  try {
+    const stored = localStorage.getItem('lang')
+    if (stored === 'he' || stored === 'en') return stored
+  } catch { /* SSR */ }
   return 'en'
 }
 
@@ -17,8 +19,10 @@ interface LocaleState {
 
 const initialLang = resolveInitialLang()
 const initialDir: Dir = initialLang === 'he' ? 'rtl' : 'ltr'
-document.documentElement.dir = initialDir
-document.documentElement.lang = initialLang
+if (typeof document !== 'undefined') {
+  document.documentElement.dir = initialDir
+  document.documentElement.lang = initialLang
+}
 
 export const useLocaleStore = create<LocaleState>((set) => ({
   lang: initialLang,
@@ -27,9 +31,11 @@ export const useLocaleStore = create<LocaleState>((set) => ({
     set((state) => {
       const next: Lang = state.lang === 'en' ? 'he' : 'en'
       const dir: Dir = next === 'he' ? 'rtl' : 'ltr'
-      localStorage.setItem('lang', next)
-      document.documentElement.dir = dir
-      document.documentElement.lang = next
+      try { localStorage.setItem('lang', next) } catch { /* SSR */ }
+      if (typeof document !== 'undefined') {
+        document.documentElement.dir = dir
+        document.documentElement.lang = next
+      }
       return { lang: next, dir }
     }),
 }))
