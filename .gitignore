@@ -34,3 +34,6 @@ data/*.json
 # Logs
 *.log
 logs/
+
+# Git backup artifacts
+.git-backup/
