@@ -21,18 +21,77 @@ data in the Red Alert Analytics Dashboard, enabling a regional view of the confl
 - **URL:** https://acleddata.com/curated/data-us-iran-regional-conflict-daily
 - **Crisis Hub:** https://acleddata.com/iran-crisis-live
 - **Country Page:** https://acleddata.com/country/iran
-- **Format:** CSV download, REST API (`https://api.acleddata.com/`)
+- **Data Export Tool:** https://acleddata.com/conflict-data (interactive, filter by country/date/event)
+- **Format:** CSV download, JSON via REST API
 - **Update Frequency:** Daily at 3:30pm CET (crisis data); weekly (standard)
 - **Geo-Blocked:** No
-- **Access:** Free registration required (myACLED account)
+- **Access:** myACLED account (Google Auth via bellisha@mail.tau.ac.il)
 - **Coverage:** Feb 28, 2026 to present; all countries in the conflict theater
-- **Data Fields:** date, location (lat/lng), event_type, sub_event_type, actors, fatalities, source, notes
 - **Scale:** 2,800+ distinct events across 29 of Iran's 31 provinces as of late March 2026
 - **Key Stats (via Bloomberg/ACLED analysis through March 13):**
   - 823 documented Iranian airstrikes (483 intercepted)
   - 1,879 US/Israeli strikes (1,661 Israeli, 218 US; 73 intercepted)
+
+#### ACLED API Details
+
+**Authentication (OAuth):**
+```bash
+# Step 1: Get access token (valid 24h)
+curl -X POST https://acleddata.com/oauth/token \
+  -d "username=bellisha@mail.tau.ac.il" \
+  -d "password=<PASSWORD>" \
+  -d "grant_type=password" \
+  -d "client_id=acled"
+
+# Returns: { "access_token": "...", "refresh_token": "..." (valid 14 days) }
+```
+
+**Data Endpoint:**
+```bash
+# Step 2: Query data with Bearer token
+curl -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  "https://acleddata.com/api/acled/read?event_date=2026-02-28&event_date_where=%3E%3D&country=Iran|Israel|Jordan|Lebanon|Syria|Iraq|United%20Arab%20Emirates|Saudi%20Arabia|Bahrain|Yemen|Oman|Qatar|Kuwait&limit=0"
+```
+
+**Key API Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `event_date` | Filter by date | `2026-02-28` |
+| `event_date_where` | Date operator | `>=`, `BETWEEN` |
+| `country` | Country filter (pipe-delimited) | `Iran\|Israel\|Jordan` |
+| `event_type` | Event type filter | `Battles\|Explosions/Remote violence` |
+| `fields` | Select specific columns | `event_date\|country\|latitude\|longitude\|fatalities` |
+| `limit` | Row limit (default 5000, 0=all) | `0` |
+
+**CSV Data Fields (Codebook: https://acleddata.com/methodology/acled-codebook):**
+| Column | Description | Maps To (Red Alert) |
+|--------|-------------|---------------------|
+| `event_id_cnty` | Unique event ID | — |
+| `event_date` | Date of event | `alert_datetime` |
+| `event_type` | 6 types (Battles, Explosions/Remote violence, etc.) | `category` |
+| `sub_event_type` | 25 sub-types (Air/drone strike, Shelling, etc.) | `category` (detailed) |
+| `actor1` | Primary actor | `raw_data` |
+| `actor2` | Secondary actor | `raw_data` |
+| `country` | Country name | — |
+| `admin1` | First admin division | — |
+| `admin2` | Second admin division | — |
+| `admin3` | Third admin division | — |
+| `location` | Location name | `location_name` |
+| `latitude` | Latitude | `lat` |
+| `longitude` | Longitude | `lng` |
+| `fatalities` | Reported fatalities | — (new field) |
+| `source` | Source of report | `raw_data` |
+| `notes` | Event description | `raw_data` |
+| `tags` | Structured metadata tags | — |
+| `geo_precision` | Spatial precision (1=exact, 2=near, 3=wide) | — |
+| `time_precision` | Temporal precision (1=exact day, 2=week, 3=month) | — |
+| `interaction` | Interaction code (actor types) | — |
+| `region` | ACLED region name | — |
+| `year` | Year | — |
+
 - **Integration Notes:** Best candidate for automated ingestion. Structured CSV/API with
   lat/lng coordinates matches our existing data model. Free tier sufficient for research.
+  OAuth tokens expire in 24h — need refresh token rotation in ingestion pipeline.
 
 ### 1.2 GDELT Project
 
