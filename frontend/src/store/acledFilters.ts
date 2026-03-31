@@ -1,9 +1,5 @@
 import { create } from 'zustand'
 
-function formatDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
 // Default to full data range (adjust when real-time data becomes available)
 const defaultFrom = '2024-01-01'
 const defaultTo = '2025-03-31'

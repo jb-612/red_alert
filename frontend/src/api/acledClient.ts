@@ -158,6 +158,55 @@ export interface AcledSyncStatus {
   total_events: number
 }
 
+// --- Situation summary ---
+
+export interface AcledSituationSummary {
+  total_events: number
+  total_fatalities: number
+  events_last_7d: number
+  events_prior_7d: number
+  trend_pct: number | null
+  fatalities_last_7d: number
+  fatalities_prior_7d: number
+  active_theaters: number
+  active_countries: number
+  top_escalating_theater: string | null
+  last_event_date: string | null
+  conflict_day_number: number
+}
+
+// --- Top actors ---
+
+export interface AcledTopActorEntry {
+  actor: string
+  total_events: number
+  total_fatalities: number
+  lethality: number
+  countries: string[]
+  primary_theater: string | null
+  events_last_7d: number
+}
+
+export interface AcledTopActorsResponse {
+  actors: AcledTopActorEntry[]
+}
+
+// --- Country matrix ---
+
+export interface AcledCountryEventTypeCell {
+  count: number
+  fatalities: number
+}
+
+export interface AcledCountryMatrixEntry {
+  country: string
+  event_types: Record<string, AcledCountryEventTypeCell>
+}
+
+export interface AcledCountryMatrixResponse {
+  matrix: AcledCountryMatrixEntry[]
+}
+
 export const acledApi = {
   getAcledGeo: () => {
     const params = buildAcledFilterParams()
@@ -222,5 +271,21 @@ export const acledApi = {
 
   getAcledSyncStatus: () => {
     return request<AcledSyncStatus>('/api/acled/sync-status')
+  },
+
+  getSituation: () => {
+    const params = buildAcledFilterParams()
+    return request<AcledSituationSummary>(`/api/acled/situation?${params}`)
+  },
+
+  getTopActors: (limit = 10) => {
+    const params = buildAcledFilterParams()
+    params.set('limit', String(limit))
+    return request<AcledTopActorsResponse>(`/api/acled/top-actors?${params}`)
+  },
+
+  getCountryMatrix: () => {
+    const params = buildAcledFilterParams()
+    return request<AcledCountryMatrixResponse>(`/api/acled/country-matrix?${params}`)
   },
 }

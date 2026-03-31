@@ -77,6 +77,19 @@ export interface Labels {
   actorProfile: string
   theaterTimeline: string
   searchActor: string
+  // Conflict Intelligence
+  situationRoom: string
+  conflictDay: string
+  forceAnalysis: string
+  topActors: string
+  countryIntel: string
+  escalationWarning: string
+  escalationAlert: string
+  civilianDashboard: string
+  civilianRatio: string
+  actorIntel: string
+  lethality: string
+  dominantType: string
 }
 
 const en: Labels = {
@@ -146,6 +159,18 @@ const en: Labels = {
   actorProfile: 'Actor Profile',
   theaterTimeline: 'Theater Timeline',
   searchActor: 'Search actor...',
+  situationRoom: 'MIDDLE EAST CONFLICT',
+  conflictDay: 'Day',
+  forceAnalysis: 'Force Analysis',
+  topActors: 'Top Actors',
+  countryIntel: 'Country Intelligence',
+  escalationWarning: 'Escalation Warning',
+  escalationAlert: 'ALERT',
+  civilianDashboard: 'Civilian Dashboard',
+  civilianRatio: 'Civilian Ratio',
+  actorIntel: 'Actor Intelligence',
+  lethality: 'Lethality',
+  dominantType: 'Dominant Type',
 }
 
 const he: Labels = {
@@ -215,6 +240,18 @@ const he: Labels = {
   actorProfile: 'פרופיל שחקן',
   theaterTimeline: 'ציר זמן זירות',
   searchActor: 'חפש שחקן...',
+  situationRoom: 'עימות במזרח התיכון',
+  conflictDay: 'יום',
+  forceAnalysis: 'ניתוח כוחות',
+  topActors: 'שחקנים מובילים',
+  countryIntel: 'מודיעין מדינות',
+  escalationWarning: 'אזהרת הסלמה',
+  escalationAlert: 'התראה',
+  civilianDashboard: 'לוח אזרחים',
+  civilianRatio: 'יחס אזרחים',
+  actorIntel: 'מודיעין שחקנים',
+  lethality: 'קטלניות',
+  dominantType: 'סוג דומיננטי',
 }
 
 const labelSets: Record<string, Labels> = { en, he }

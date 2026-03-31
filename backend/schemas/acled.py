@@ -187,6 +187,78 @@ class AcledCivilianImpactResponse(BaseModel):
     by_country: list[AcledCivilianCountryImpact]
 
 
+# --- Situation summary ---
+
+
+class AcledSituationResponse(BaseModel):
+    """Conflict situation summary with 7-day trends."""
+
+    total_events: int = Field(description="Total events in the filter range")
+    total_fatalities: int = Field(description="Total fatalities in the filter range")
+    events_last_7d: int = Field(description="Events in the last 7 days of the range")
+    events_prior_7d: int = Field(description="Events in the 7 days before that")
+    trend_pct: float | None = Field(description="Week-over-week % change (None if prior=0)")
+    fatalities_last_7d: int = Field(description="Fatalities in the last 7 days")
+    fatalities_prior_7d: int = Field(description="Fatalities in the prior 7 days")
+    active_theaters: int = Field(description="Distinct theaters with events")
+    active_countries: int = Field(description="Distinct countries with events")
+    top_escalating_theater: str | None = Field(
+        description="Theater with highest week-over-week % increase",
+    )
+    last_event_date: str | None = Field(description="Date of most recent event (YYYY-MM-DD)")
+    conflict_day_number: int = Field(
+        description="Days since 2026-02-28 or since first event in range",
+    )
+
+
+# --- Top actors ---
+
+
+class AcledTopActorEntry(BaseModel):
+    """Rich actor entry with lethality and sparkline data."""
+
+    actor: str = Field(description="Actor name")
+    total_events: int = Field(description="Total events involving this actor")
+    total_fatalities: int = Field(description="Total fatalities")
+    lethality: float = Field(description="Fatalities per event ratio")
+    countries: list[str] = Field(description="Countries where actor is active")
+    primary_theater: str | None = Field(description="Theater with most events for this actor")
+    events_last_7d: int = Field(description="Events in the last 7 days for sparkline")
+
+
+class AcledTopActorsResponse(BaseModel):
+    """Top actors list."""
+
+    actors: list[AcledTopActorEntry] = Field(description="Ranked actor list")
+
+
+# --- Country matrix ---
+
+
+class AcledCountryEventTypeCell(BaseModel):
+    """Single cell in the country × event-type matrix."""
+
+    count: int = Field(description="Number of events")
+    fatalities: int = Field(description="Total fatalities")
+
+
+class AcledCountryMatrixEntry(BaseModel):
+    """One country's row in the matrix."""
+
+    country: str = Field(description="Country name")
+    event_types: dict[str, AcledCountryEventTypeCell] = Field(
+        description="Event type name → {count, fatalities}",
+    )
+
+
+class AcledCountryMatrixResponse(BaseModel):
+    """Country × Event Type matrix response."""
+
+    matrix: list[AcledCountryMatrixEntry] = Field(
+        description="One entry per country with event type breakdown",
+    )
+
+
 # --- Unified timeline (OREF + ACLED) ---
 
 
