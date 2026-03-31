@@ -60,6 +60,23 @@ export interface Labels {
   alerts: string
   days: string
   noData: string
+  // Conflicts (ACLED)
+  conflicts: string
+  conflictsTitle: string
+  theaters: string
+  coreME: string
+  maritime: string
+  extendedME: string
+  globalTerror: string
+  events: string
+  fatalities: string
+  countries: string
+  actors: string
+  escalation: string
+  civilianImpact: string
+  actorProfile: string
+  theaterTimeline: string
+  searchActor: string
 }
 
 const en: Labels = {
@@ -113,6 +130,22 @@ const en: Labels = {
   alerts: 'alerts',
   days: 'days',
   noData: 'No data available',
+  conflicts: 'Conflicts',
+  conflictsTitle: 'ACLED Conflict Analytics',
+  theaters: 'Theaters',
+  coreME: 'Core Middle East',
+  maritime: 'Maritime',
+  extendedME: 'Extended Middle East',
+  globalTerror: 'Global Terror',
+  events: 'Events',
+  fatalities: 'Fatalities',
+  countries: 'Countries',
+  actors: 'Actors',
+  escalation: 'Escalation Tracker',
+  civilianImpact: 'Civilian Impact',
+  actorProfile: 'Actor Profile',
+  theaterTimeline: 'Theater Timeline',
+  searchActor: 'Search actor...',
 }
 
 const he: Labels = {
@@ -166,6 +199,22 @@ const he: Labels = {
   alerts: 'התרעות',
   days: 'ימים',
   noData: 'אין נתונים',
+  conflicts: 'עימותים',
+  conflictsTitle: 'אנליטיקת עימותים ACLED',
+  theaters: 'זירות',
+  coreME: 'מזרח תיכון מרכזי',
+  maritime: 'ימי',
+  extendedME: 'מזרח תיכון מורחב',
+  globalTerror: 'טרור עולמי',
+  events: 'אירועים',
+  fatalities: 'הרוגים',
+  countries: 'מדינות',
+  actors: 'שחקנים',
+  escalation: 'מעקב הסלמה',
+  civilianImpact: 'פגיעה באזרחים',
+  actorProfile: 'פרופיל שחקן',
+  theaterTimeline: 'ציר זמן זירות',
+  searchActor: 'חפש שחקן...',
 }
 
 const labelSets: Record<string, Labels> = { en, he }

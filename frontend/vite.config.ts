@@ -16,6 +16,7 @@ export default defineConfig({
       '/api': 'http://localhost:8000',
     },
   },
+  appType: 'spa',
   test: {
     environment: 'jsdom',
     globals: true,
