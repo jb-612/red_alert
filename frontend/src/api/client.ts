@@ -1,7 +1,7 @@
 import { useFilterStore } from '@/store/filters'
 
 function buildFilterParams(): URLSearchParams {
-  const { dateRange, categories, location } = useFilterStore.getState()
+  const { dateRange, categories, location, region } = useFilterStore.getState()
   const params = new URLSearchParams()
 
   if (dateRange.from) params.set('from_date', dateRange.from)
@@ -12,13 +12,26 @@ function buildFilterParams(): URLSearchParams {
     }
   }
   if (location) params.set('location', location)
+  if (region) params.set('zone', region)
 
   return params
 }
 
 async function request<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`)
+  let res: Response
+  try {
+    res = await fetch(url)
+  } catch (err: unknown) {
+    if (err instanceof TypeError) {
+      throw new Error('Cannot connect to server. Is the backend running?')
+    }
+    throw err instanceof Error ? err : new Error(String(err))
+  }
+  if (!res.ok) {
+    if (res.status >= 500) throw new Error(`Server error (${res.status})`)
+    if (res.status === 404) throw new Error(`Not found (404)`)
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
   return res.json() as Promise<T>
 }
 
@@ -213,7 +226,29 @@ export interface PrealertCorrelationData {
   locations: PrealertLocationStat[]
 }
 
+export interface LocationSearchResult {
+  name: string
+  name_en: string | null
+}
+
+export interface ZoneInfo {
+  zone: string
+  zone_en: string
+  city_count: number
+}
+
 export const api = {
+  searchLocations: (q: string, limit = 20) => {
+    const params = new URLSearchParams()
+    params.set('q', q)
+    params.set('limit', String(limit))
+    return request<LocationSearchResult[]>(`/api/locations/search?${params}`)
+  },
+
+  getZones: () => {
+    return request<ZoneInfo[]>('/api/locations/zones')
+  },
+
   getTimeline: () => {
     const params = buildFilterParams()
     const { granularity } = useFilterStore.getState()
@@ -231,9 +266,10 @@ export const api = {
     return request<HourlyHeatmapCell[]>(`/api/analytics/hourly-heatmap?${params}`)
   },
 
-  getLocationsByCount: (limit = 10) => {
+  getLocationsByCount: (limit = 10, order: 'asc' | 'desc' = 'desc') => {
     const params = buildFilterParams()
     params.set('limit', String(limit))
+    params.set('order', order)
     return request<LocationCount[]>(`/api/alerts/by-location?${params}`)
   },
 

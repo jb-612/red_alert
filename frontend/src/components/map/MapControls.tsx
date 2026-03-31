@@ -1,11 +1,21 @@
 import { Flame, Circle, RotateCcw, Timer } from 'lucide-react'
 import { useLabels } from '@/lib/labels'
 
+const CATEGORY_CHIPS: { id: number; label: string; color: string }[] = [
+  { id: 1, label: 'Rockets', color: '#ef4444' },
+  { id: 2, label: 'UAV', color: '#f97316' },
+  { id: 3, label: 'Infiltration', color: '#eab308' },
+  { id: 4, label: 'All Clear', color: '#22c55e' },
+  { id: 5, label: 'Earthquake', color: '#6b7280' },
+]
+
 interface MapControlsProps {
   mode: 'heatmap' | 'scatter'
   onModeChange: (mode: 'heatmap' | 'scatter') => void
   onResetView: () => void
   onStartPlayback?: () => void
+  mapCategories?: Set<number>
+  onToggleMapCategory?: (id: number) => void
 }
 
 const LEGEND_COLORS = [
@@ -16,7 +26,7 @@ const LEGEND_COLORS = [
   { color: 'rgb(240, 59, 32)' },
 ]
 
-export function MapControls({ mode, onModeChange, onResetView, onStartPlayback }: MapControlsProps) {
+export function MapControls({ mode, onModeChange, onResetView, onStartPlayback, mapCategories, onToggleMapCategory }: MapControlsProps) {
   const labels = useLabels()
 
   return (
@@ -65,6 +75,29 @@ export function MapControls({ mode, onModeChange, onResetView, onStartPlayback }
           <Timer className="size-3.5" />
           {labels.timelapse}
         </button>
+      )}
+
+      {/* Category filter (scatter mode only) */}
+      {mode === 'scatter' && mapCategories && onToggleMapCategory && (
+        <div className="rounded-lg bg-card/90 backdrop-blur-sm ring-1 ring-foreground/10 p-2">
+          <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Filter by type</p>
+          <div className="flex flex-col gap-1">
+            {CATEGORY_CHIPS.map((cat) => {
+              const active = mapCategories.size === 0 || mapCategories.has(cat.id)
+              return (
+                <button
+                  key={cat.id}
+                  className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] rounded transition-opacity"
+                  style={{ opacity: active ? 1 : 0.35 }}
+                  onClick={() => onToggleMapCategory(cat.id)}
+                >
+                  <span className="inline-block size-2 rounded-full" style={{ backgroundColor: cat.color }} />
+                  <span className="text-foreground">{cat.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
       )}
 
       {/* Legend */}

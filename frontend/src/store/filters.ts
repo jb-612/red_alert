@@ -1,5 +1,15 @@
 import { create } from 'zustand'
 
+function formatDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const today = new Date()
+const sixMonthsAgo = new Date(today)
+sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+const defaultFrom = formatDate(sixMonthsAgo)
+const defaultTo = formatDate(today)
+
 interface FilterState {
   dateRange: { from: string | null; to: string | null }
   categories: number[]
@@ -22,7 +32,7 @@ interface FilterState {
 }
 
 export const useFilterStore = create<FilterState>((set) => ({
-  dateRange: { from: null, to: null },
+  dateRange: { from: defaultFrom, to: defaultTo },
   categories: [],
   location: null,
   granularity: 'day',

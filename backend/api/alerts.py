@@ -30,13 +30,14 @@ def list_alerts(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> AlertListResponse:
     """List alerts with optional filtering and pagination."""
     base = select(Alert)
-    base = apply_filters(base, from_date, to_date, categories, location)
+    base = apply_filters(base, from_date, to_date, categories, location, zone=zone)
 
     total = db.scalar(select(func.count()).select_from(base.subquery()))
     items = db.scalars(
@@ -57,6 +58,7 @@ def alert_timeline(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     granularity: str = Query("day", pattern="^(day|week|month)$"),
     db: Session = Depends(get_db),
 ) -> TimelineResponse:
@@ -69,7 +71,7 @@ def alert_timeline(
         period_expr = extract_month(Alert.alert_datetime)
 
     stmt = select(period_expr.label("period"), func.count().label("count")).group_by("period")
-    stmt = apply_filters(stmt, from_date, to_date, categories, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location, zone=zone)
     stmt = stmt.order_by("period")
 
     rows = db.execute(stmt).all()
@@ -84,6 +86,7 @@ def alerts_by_category(
     from_date: date | None = None,
     to_date: date | None = None,
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> list[CategoryCount]:
     """Alert counts grouped by category."""
@@ -92,7 +95,7 @@ def alerts_by_category(
         Alert.category_desc,
         func.count().label("count"),
     ).group_by(Alert.category, Alert.category_desc)
-    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location)
+    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location, zone=zone)
     stmt = stmt.order_by(func.count().desc())
 
     rows = db.execute(stmt).all()
@@ -107,7 +110,9 @@ def alerts_by_location(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
+    zone: str | None = Query(None, max_length=100),
     limit: int = Query(20, ge=1, le=100),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
 ) -> list[LocationCount]:
     """Alert counts grouped by location."""
@@ -115,8 +120,9 @@ def alerts_by_location(
         Alert.location_name,
         func.count().label("count"),
     ).group_by(Alert.location_name)
-    stmt = apply_filters(stmt, from_date, to_date, categories, location=None)
-    stmt = stmt.order_by(func.count().desc()).limit(limit)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location=None, zone=zone)
+    order_func = func.count().desc() if order == "desc" else func.count().asc()
+    stmt = stmt.order_by(order_func).limit(limit)
 
     rows = db.execute(stmt).all()
     return [LocationCount(location_name=r.location_name, count=r.count) for r in rows]
@@ -127,6 +133,7 @@ def alerts_geo(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> list[GeoPoint]:
     """Aggregated alert data per location for the map."""
@@ -143,7 +150,7 @@ def alerts_geo(
         .group_by(Alert.location_name)
     )
 
-    stmt = apply_filters(stmt, from_date, to_date, categories, location=None)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location=None, zone=zone)
 
     rows = db.execute(stmt).all()
     results = []

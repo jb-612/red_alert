@@ -52,6 +52,30 @@ export function PeriodComparison() {
     return () => { cancelled = true }
   }, [dateRange.from, dateRange.to, comparisonRange.from, comparisonRange.to, categories, location])
 
+  const a = data?.period_a
+  const b = data?.period_b
+  const delta = data?.delta
+
+  const handleExportPng = useCallback(() => {
+    if (chartInstance) exportPng(chartInstance, 'period-comparison')
+  }, [chartInstance])
+
+  const handleExportCsv = useCallback(() => {
+    const rows: Record<string, unknown>[] = []
+    for (const t of a?.timeline ?? []) {
+      rows.push({ period: t.period, period_a_count: t.count, period_b_count: '' })
+    }
+    for (const t of b?.timeline ?? []) {
+      const existing = rows.find((r) => r.period === t.period)
+      if (existing) {
+        existing.period_b_count = t.count
+      } else {
+        rows.push({ period: t.period, period_a_count: '', period_b_count: t.count })
+      }
+    }
+    exportCsv(rows, 'period-comparison')
+  }, [a, b])
+
   if (!dateRange.from || !dateRange.to || !comparisonRange.from || !comparisonRange.to) {
     return (
       <ChartPanel title={labels.periodComparison} loading={false} error={null}>
@@ -61,10 +85,6 @@ export function PeriodComparison() {
       </ChartPanel>
     )
   }
-
-  const a = data?.period_a
-  const b = data?.period_b
-  const delta = data?.delta
 
   const timelineOption: EChartsOption = {
     backgroundColor: 'transparent',
@@ -110,26 +130,6 @@ export function PeriodComparison() {
     ],
     grid: { left: 50, right: 20, top: 30, bottom: 30 },
   }
-
-  const handleExportPng = useCallback(() => {
-    if (chartInstance) exportPng(chartInstance, 'period-comparison')
-  }, [chartInstance])
-
-  const handleExportCsv = useCallback(() => {
-    const rows: Record<string, unknown>[] = []
-    for (const t of a?.timeline ?? []) {
-      rows.push({ period: t.period, period_a_count: t.count, period_b_count: '' })
-    }
-    for (const t of b?.timeline ?? []) {
-      const existing = rows.find((r) => r.period === t.period)
-      if (existing) {
-        existing.period_b_count = t.count
-      } else {
-        rows.push({ period: t.period, period_a_count: '', period_b_count: t.count })
-      }
-    }
-    exportCsv(rows, 'period-comparison')
-  }, [a, b])
 
   return (
     <ChartPanel title={labels.periodComparison} loading={loading} error={error} onExportPng={handleExportPng} onExportCsv={handleExportCsv}>

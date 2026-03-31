@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption, ECharts } from 'echarts'
+import { RotateCcw } from 'lucide-react'
 import { api } from '@/api/client'
 import { useApiData } from '@/hooks/useApiData'
+import { useFilterStore } from '@/store/filters'
 import { useThemeStore } from '@/store/theme'
 import { getChartColors } from '@/lib/chart-theme'
 import { useLabels } from '@/lib/labels'
@@ -36,8 +38,24 @@ export function CategoryBreakdown() {
   const colors = getChartColors(dark)
   const labels = useLabels()
   const [chartInstance, setChartInstance] = useState<ECharts | null>(null)
+  const { categories: selectedCategories, setCategories } = useFilterStore()
 
   const categories = data ?? []
+
+  const handlePieClick = useCallback((params: { data?: { categoryId?: number } }) => {
+    const catId = params.data?.categoryId
+    if (catId == null) return
+    const current = useFilterStore.getState().categories
+    if (current.includes(catId)) {
+      setCategories(current.filter((c) => c !== catId))
+    } else {
+      setCategories([...current, catId])
+    }
+  }, [setCategories])
+
+  const handleReset = useCallback(() => {
+    setCategories([])
+  }, [setCategories])
 
   const option: EChartsOption = {
     backgroundColor: 'transparent',
@@ -55,7 +73,11 @@ export function CategoryBreakdown() {
         data: categories.map((d, i) => ({
           name: d.category_desc || `Category ${d.category}`,
           value: d.count,
-          itemStyle: { color: getColor(d.category_desc, i) },
+          categoryId: d.category,
+          itemStyle: {
+            color: getColor(d.category_desc, i),
+            opacity: selectedCategories.length === 0 || selectedCategories.includes(d.category) ? 1 : 0.3,
+          },
         })),
       },
     ],
@@ -74,7 +96,23 @@ export function CategoryBreakdown() {
 
   return (
     <ChartPanel title={labels.categoryBreakdown} loading={loading} error={error} onExportPng={handleExportPng} onExportCsv={handleExportCsv}>
-      <ReactECharts option={option} style={{ height: 280 }} onChartReady={(instance) => setChartInstance(instance)} />
+      {selectedCategories.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={handleReset}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </button>
+        </div>
+      )}
+      <ReactECharts
+        option={option}
+        style={{ height: selectedCategories.length > 0 ? 256 : 280 }}
+        onChartReady={(instance) => setChartInstance(instance)}
+        onEvents={{ click: handlePieClick }}
+      />
     </ChartPanel>
   )
 }

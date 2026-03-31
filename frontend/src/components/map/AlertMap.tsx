@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { DeckGL } from '@deck.gl/react'
 import { HeatmapLayer } from '@deck.gl/aggregation-layers'
 import { ScatterplotLayer } from '@deck.gl/layers'
@@ -12,6 +12,15 @@ import { DrillDownPanel } from '@/components/drilldown/DrillDownPanel'
 import { usePlayback } from '@/hooks/usePlayback'
 import { useThemeStore } from '@/store/theme'
 import type { GeoLocation } from '@/api/client'
+
+function isWebGLAvailable(): boolean {
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+  } catch {
+    return false
+  }
+}
 
 const INITIAL_VIEW_STATE: MapViewState = {
   latitude: 31.5,
@@ -41,9 +50,19 @@ export function AlertMap({ data }: AlertMapProps) {
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW_STATE)
   const [mode, setMode] = useState<'heatmap' | 'scatter'>('heatmap')
   const [selectedLocation, setSelectedLocation] = useState<GeoLocation | null>(null)
+  const [webglOk, setWebglOk] = useState(true)
+  const [mapCategories, setMapCategories] = useState<Set<number>>(new Set())
+  const checkedWebgl = useRef(false)
 
   const dark = useThemeStore((s) => s.dark)
   const playback = usePlayback()
+
+  useEffect(() => {
+    if (!checkedWebgl.current) {
+      checkedWebgl.current = true
+      if (!isWebGLAvailable()) setWebglOk(false)
+    }
+  }, [])
 
   const handleResetView = useCallback(() => {
     setViewState(INITIAL_VIEW_STATE)
@@ -61,8 +80,24 @@ export function AlertMap({ data }: AlertMapProps) {
     [mode],
   )
 
+  const handleToggleMapCategory = useCallback((id: number) => {
+    setMapCategories((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
   // Use playback geo data when playback has frames, otherwise use the data prop
-  const layerData = playback.totalFrames > 0 ? playback.currentGeoData : data
+  const rawLayerData = playback.totalFrames > 0 ? playback.currentGeoData : data
+  // Filter by map category selection (scatter mode only)
+  const layerData = mode === 'scatter' && mapCategories.size > 0
+    ? rawLayerData.filter((d) => d.categories?.some((c) => mapCategories.has(c)) ?? true)
+    : rawLayerData
 
   const layers = useMemo(() => {
     if (mode === 'heatmap') {
@@ -104,6 +139,16 @@ export function AlertMap({ data }: AlertMapProps) {
 
   const mapStyle = dark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT
 
+  if (!webglOk) {
+    return (
+      <div className="relative h-full w-full flex items-center justify-center bg-muted/50 rounded-lg">
+        <p className="text-sm text-muted-foreground">
+          WebGL is not available in this browser. Map visualization requires WebGL support.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="relative h-full w-full">
       <DeckGL
@@ -117,7 +162,7 @@ export function AlertMap({ data }: AlertMapProps) {
         <Map mapStyle={mapStyle} />
       </DeckGL>
 
-      <MapControls mode={mode} onModeChange={setMode} onResetView={handleResetView} onStartPlayback={playback.initPlayback} />
+      <MapControls mode={mode} onModeChange={setMode} onResetView={handleResetView} onStartPlayback={playback.initPlayback} mapCategories={mapCategories} onToggleMapCategory={handleToggleMapCategory} />
 
       <PlaybackControls
         isPlaying={playback.isPlaying}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,35 @@ from backend.models.location import Location
 from backend.schemas.alert import HierarchyCity, HierarchyZone
 
 router = APIRouter(prefix="/api/locations", tags=["locations"])
+
+
+@router.get("/search")
+def search_locations(
+    q: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> list[dict[str, str | None]]:
+    """Search locations by name (Hebrew or English)."""
+    stmt = (
+        select(Location.name, Location.name_en)
+        .where(Location.name.contains(q) | Location.name_en.ilike(f"%{q}%"))
+        .limit(limit)
+    )
+    rows = db.execute(stmt).all()
+    return [{"name": r.name, "name_en": r.name_en} for r in rows]
+
+
+@router.get("/zones")
+def list_zones(db: Session = Depends(get_db)) -> list[dict[str, str | int | None]]:
+    """List all distinct zones with city counts."""
+    stmt = (
+        select(Location.zone, Location.zone_en, func.count().label("city_count"))
+        .where(Location.zone.isnot(None), Location.zone != "")
+        .group_by(Location.zone, Location.zone_en)
+        .order_by(Location.zone_en)
+    )
+    rows = db.execute(stmt).all()
+    return [{"zone": r.zone, "zone_en": r.zone_en, "city_count": r.city_count} for r in rows]
 
 
 @router.get("/hierarchy", response_model=list[HierarchyZone])

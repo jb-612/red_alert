@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption, ECharts } from 'echarts'
 import { api } from '@/api/client'
 import { useApiData } from '@/hooks/useApiData'
+import { useFilterStore } from '@/store/filters'
 import { useThemeStore } from '@/store/theme'
 import { getChartColors } from '@/lib/chart-theme'
 import { useLabels } from '@/lib/labels'
@@ -15,8 +16,27 @@ export function AlertTimeline() {
   const colors = getChartColors(dark)
   const labels = useLabels()
   const [chartInstance, setChartInstance] = useState<ECharts | null>(null)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const buckets = data?.buckets ?? []
+
+  const handleDataZoom = useCallback(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    debounceTimer.current = setTimeout(() => {
+      if (!chartInstance || buckets.length === 0) return
+      const option = chartInstance.getOption() as { dataZoom?: Array<{ startValue?: number; endValue?: number }> }
+      const zoom = option.dataZoom?.[0]
+      if (zoom?.startValue != null && zoom?.endValue != null) {
+        const startIdx = Math.max(0, Math.min(zoom.startValue, buckets.length - 1))
+        const endIdx = Math.max(0, Math.min(zoom.endValue, buckets.length - 1))
+        const fromDate = buckets[startIdx]?.period
+        const toDate = buckets[endIdx]?.period
+        if (fromDate && toDate) {
+          useFilterStore.getState().setDateRange(fromDate, toDate)
+        }
+      }
+    }, 500)
+  }, [chartInstance, buckets])
 
   const option: EChartsOption = {
     backgroundColor: 'transparent',
@@ -68,7 +88,12 @@ export function AlertTimeline() {
 
   return (
     <ChartPanel title={labels.alertTimeline} loading={loading} error={error} onExportPng={handleExportPng} onExportCsv={handleExportCsv}>
-      <ReactECharts option={option} style={{ height: 280 }} onChartReady={(instance) => setChartInstance(instance)} />
+      <ReactECharts
+        option={option}
+        style={{ height: 280 }}
+        onChartReady={(instance) => setChartInstance(instance)}
+        onEvents={{ datazoom: handleDataZoom }}
+      />
     </ChartPanel>
   )
 }

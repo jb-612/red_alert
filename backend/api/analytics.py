@@ -157,10 +157,11 @@ def kpi(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> KpiResponse:
     """Summary KPI data for the dashboard header."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
 
     total_stmt = select(func.count()).select_from(Alert)
     total_stmt = apply_filters(total_stmt, *filters)
@@ -178,6 +179,7 @@ def hourly_heatmap(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> list[HourlyHeatmapCell]:
     """Hour-of-day x day-of-week heatmap.
@@ -190,7 +192,7 @@ def hourly_heatmap(
         extract_dow(Alert.alert_datetime).label("dow_raw"),
         func.count().label("count"),
     ).group_by("hour", "dow_raw")
-    stmt = apply_filters(stmt, from_date, to_date, categories, location)
+    stmt = apply_filters(stmt, from_date, to_date, categories, location, zone=zone)
 
     rows = db.execute(stmt).all()
     results = []
@@ -232,11 +234,12 @@ def top_locations(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
+    zone: str | None = Query(None, max_length=100),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ) -> list[TopLocationEntry]:
     """Top-N locations with daily sparkline data."""
-    filters = (from_date, to_date, categories, None)
+    filters = (from_date, to_date, categories, None, zone)
 
     top_stmt = select(
         Alert.location_name,
@@ -268,6 +271,7 @@ def analytics_by_region(
     from_date: date | None = None,
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> RegionAnalytics:
     """Analytics filtered to all locations within a specific zone."""
@@ -286,7 +290,7 @@ def analytics_by_region(
 
     # Base filter: alerts in these locations
     base = select(Alert).where(Alert.location_name.in_(location_names))
-    filters = (from_date, to_date, categories, None)
+    filters = (from_date, to_date, categories, None, zone)
     base = apply_filters(base, *filters)
     sub = base.subquery()
 
@@ -408,10 +412,11 @@ def sleep_score(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> SleepScoreResponse:
     """Sleep quality score based on alert-free nights (22:00-06:59)."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
     nights = _build_night_range(from_date, to_date, db, filters)
 
     if not nights:
@@ -499,11 +504,12 @@ def best_weekdays(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     top_locations: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> BestWeekdaysResponse:
     """Rank weekdays by fewest alerts and show peak hours per top location."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
     counts = _query_weekday_counts(db, filters)
 
     sorted_days = sorted(counts.items(), key=lambda x: x[1])
@@ -619,11 +625,12 @@ def quiet_streaks(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     top_n: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> QuietStreaksResponse:
     """Find consecutive alert-free day stretches."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
     return _build_quiet_streaks(db, filters, from_date, to_date, top_n)
 
 
@@ -709,12 +716,13 @@ def anomalies(
     to_date: date | None = None,
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     threshold: float = Query(2.0, ge=1.0, le=4.0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> AnomalyResponse:
     """Detect anomalous days using z-score on daily alert counts."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
     daily = _query_daily_counts(db, filters)
     return _compute_anomalies(daily, threshold, limit)
 
@@ -725,9 +733,10 @@ def _build_period_summary(
     to_date: date,
     categories: list[int] | None,
     location: str | None,
+    zone: str | None = None,
 ) -> PeriodSummary:
     """Build a summary of alerts for a single date range."""
-    filters = (from_date, to_date, categories, location)
+    filters = (from_date, to_date, categories, location, zone)
 
     total = db.scalar(apply_filters(select(func.count()).select_from(Alert), *filters)) or 0
 
@@ -802,16 +811,21 @@ def compare(
     period_b_to: date = Query(...),
     categories: list[int] | None = Query(None),
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> ComparisonResponse:
     """Compare metrics between two date ranges."""
-    a = _build_period_summary(db, period_a_from, period_a_to, categories, location)
-    b = _build_period_summary(db, period_b_from, period_b_to, categories, location)
+    a = _build_period_summary(db, period_a_from, period_a_to, categories, location, zone)
+    b = _build_period_summary(db, period_b_from, period_b_to, categories, location, zone)
     return ComparisonResponse(period_a=a, period_b=b, delta=_compute_delta(a, b))
 
 
 def _query_prealert_totals(
-    db: Session, from_date: date | None, to_date: date | None, location: str | None
+    db: Session,
+    from_date: date | None,
+    to_date: date | None,
+    location: str | None,
+    zone: str | None = None,
 ) -> dict[str, int]:
     """Count category 14 alerts per location."""
     stmt = (
@@ -819,7 +833,7 @@ def _query_prealert_totals(
         .where(Alert.category == PRE_ALERT_CATEGORY)
         .group_by(Alert.location_name)
     )
-    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location)
+    stmt = apply_filters(stmt, from_date, to_date, categories=None, location=location, zone=zone)
     return {r.location_name: r.cnt for r in db.execute(stmt).all()}
 
 
@@ -829,6 +843,7 @@ def _query_prealert_followed(
     to_date: date | None,
     location: str | None,
     window_minutes: int,
+    zone: str | None = None,
 ) -> dict[str, int]:
     """Count cat 14 alerts followed by cat 1 at same location within window."""
     a = Alert.__table__.alias("a")
@@ -859,6 +874,9 @@ def _query_prealert_followed(
         stmt = stmt.where(a.c.alert_datetime <= datetime.combine(to_date, datetime.max.time()))
     if location:
         stmt = stmt.where(a.c.location_name.contains(location))
+    if zone:
+        zone_names = select(Location.name).where(Location.zone_en == zone)
+        stmt = stmt.where(a.c.location_name.in_(zone_names))
 
     return {r.location_name: r.cnt for r in db.execute(stmt).all()}
 
@@ -906,12 +924,13 @@ def prealert_correlation(
     from_date: date | None = None,
     to_date: date | None = None,
     location: str | None = Query(None, max_length=200),
+    zone: str | None = Query(None, max_length=100),
     window_minutes: int = Query(30, ge=1, le=60),
     min_prealerts: int = Query(5, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> PrealertCorrelationResponse:
     """Pre-alert (cat 14) to actual alert (cat 1) correlation by location."""
-    totals = _query_prealert_totals(db, from_date, to_date, location)
-    followed = _query_prealert_followed(db, from_date, to_date, location, window_minutes)
+    totals = _query_prealert_totals(db, from_date, to_date, location, zone)
+    followed = _query_prealert_followed(db, from_date, to_date, location, window_minutes, zone)
     return _build_correlation_response(totals, followed, window_minutes, min_prealerts, limit)

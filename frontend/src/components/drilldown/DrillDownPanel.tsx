@@ -55,7 +55,7 @@ export function DrillDownPanel({ location, onClose }: DrillDownPanelProps) {
   const CATEGORY_COLORS = ['#41b6c4', '#7fcdbb', '#ffaa00', '#f03b20']
 
   return (
-    <div className="absolute bottom-3 left-3 z-10 w-72 rounded-lg bg-card/95 backdrop-blur-sm ring-1 ring-foreground/10 shadow-lg">
+    <div className="absolute bottom-3 left-3 z-10 w-72 max-h-[calc(100%-24px)] overflow-y-auto rounded-lg bg-card/95 backdrop-blur-sm ring-1 ring-foreground/10 shadow-lg">
       {/* Header */}
       <div className="flex items-start justify-between px-3 pt-3 pb-2">
         <div className="flex items-start gap-2 min-w-0">
