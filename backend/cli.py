@@ -52,6 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
     loc_p = sub.add_parser("load-locations", help="Load locations from cities.json")
     loc_p.add_argument("--file", help="Path to cities.json (defaults to data/cities.json)")
 
+    acled_p = sub.add_parser("acled-sync", help="Sync ACLED conflict events")
+    acled_p.add_argument("--from-date", help="Start date (YYYY-MM-DD). Defaults to last sync date.")
+    acled_p.add_argument("--to-date", help="End date (YYYY-MM-DD). Defaults to today.")
+    acled_p.add_argument("--full", action="store_true", help="Full sync from 2024-01-01, ignoring last sync.")
+
+    acled_csv = sub.add_parser("acled-load", help="Load ACLED events from CSV export file")
+    acled_csv.add_argument("--file", required=True, help="Path to ACLED CSV export file")
+
     serve_p = sub.add_parser("serve", help="Run uvicorn dev server")
     serve_p.add_argument("--port", type=int, default=8000)
     serve_p.add_argument("--host", default="0.0.0.0")
@@ -151,6 +159,47 @@ def cmd_load_locations(cities_path: str | None = None) -> None:
         db.close()
 
 
+def cmd_acled_sync(
+    from_date_str: str | None = None,
+    to_date_str: str | None = None,
+    full: bool = False,
+) -> None:
+    """Sync ACLED conflict data to local database."""
+    from backend.ingestion.acled_client import get_last_sync_date, ingest_acled_events
+
+    init_db()
+    db = SessionLocal()
+    try:
+        if full:
+            event_date_from = "2024-01-01"
+        elif from_date_str:
+            event_date_from = from_date_str
+        else:
+            last = get_last_sync_date(db)
+            event_date_from = str(last) if last else "2024-01-01"
+
+        event_date_to = to_date_str
+
+        logger.info("ACLED sync: %s to %s", event_date_from, event_date_to or "latest")
+        count = ingest_acled_events(db, event_date_from=event_date_from, event_date_to=event_date_to)
+        logger.info("ACLED sync complete: %d events inserted", count)
+    finally:
+        db.close()
+
+
+def cmd_acled_load(csv_path: str) -> None:
+    """Load ACLED events from a CSV export file."""
+    from backend.ingestion.acled_csv_loader import load_acled_csv
+
+    init_db()
+    db = SessionLocal()
+    try:
+        count = load_acled_csv(db, csv_path)
+        logger.info("ACLED CSV load complete: %d events inserted", count)
+    finally:
+        db.close()
+
+
 def cmd_serve(host: str, port: int) -> None:
     """Start the uvicorn development server."""
     import uvicorn
@@ -170,6 +219,14 @@ def main() -> None:
         cmd_seed_categories()
     elif args.command == "load-locations":
         cmd_load_locations(cities_path=args.file)
+    elif args.command == "acled-sync":
+        cmd_acled_sync(
+            from_date_str=args.from_date,
+            to_date_str=args.to_date,
+            full=args.full,
+        )
+    elif args.command == "acled-load":
+        cmd_acled_load(csv_path=args.file)
     elif args.command == "serve":
         cmd_serve(args.host, args.port)
     else:

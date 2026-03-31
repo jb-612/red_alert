@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.acled import router as acled_router
+from backend.api.acled_analytics import router as acled_analytics_router
 from backend.api.alerts import router as alerts_router
 from backend.api.analytics import router as analytics_router
 from backend.api.locations import router as locations_router
@@ -23,7 +25,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Red Alert Analytics API",
-    description="Analytics API for Israel's OREF alert history data",
+    description="Analytics API for OREF alert history and ACLED conflict event data",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -36,6 +38,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(acled_router)
+app.include_router(acled_analytics_router)
 app.include_router(alerts_router)
 app.include_router(analytics_router)
 app.include_router(locations_router)
