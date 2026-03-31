@@ -4,11 +4,9 @@ function formatDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-const today = new Date()
-const sixMonthsAgo = new Date(today)
-sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
-const defaultFrom = formatDate(sixMonthsAgo)
-const defaultTo = formatDate(today)
+// Default to full data range (adjust when real-time data becomes available)
+const defaultFrom = '2024-01-01'
+const defaultTo = '2025-03-31'
 
 interface AcledFilterState {
   dateRange: { from: string | null; to: string | null }
