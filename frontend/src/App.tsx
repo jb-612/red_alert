@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ConflictsPage } from '@/pages/ConflictsPage'
+import { ConflictPulsePage } from '@/pages/ConflictPulsePage'
 import { useLocaleStore } from '@/store/locale'
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/conflicts" element={<ConflictsPage />} />
+          <Route path="/pulse" element={<ConflictPulsePage />} />
         </Route>
       </Routes>
     </BrowserRouter>

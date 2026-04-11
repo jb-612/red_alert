@@ -6,12 +6,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.acled import router as acled_router
+from backend.api.acled_aggregates import router as acled_aggregates_router
 from backend.api.acled_analytics import router as acled_analytics_router
 from backend.api.alerts import router as alerts_router
 from backend.api.analytics import router as analytics_router
 from backend.api.locations import router as locations_router
+from backend.api.sync import router as sync_router
 from backend.config import settings
 from backend.database import init_db
+from backend.models import acled_aggregate  # noqa: F401 — register table for init_db
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,10 +42,12 @@ app.add_middleware(
 )
 
 app.include_router(acled_router)
+app.include_router(acled_aggregates_router)
 app.include_router(acled_analytics_router)
 app.include_router(alerts_router)
 app.include_router(analytics_router)
 app.include_router(locations_router)
+app.include_router(sync_router)
 
 
 @app.get("/api/health")

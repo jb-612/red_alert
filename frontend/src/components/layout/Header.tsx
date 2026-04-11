@@ -3,6 +3,7 @@ import { useThemeStore } from '@/store/theme'
 import { useLocaleStore } from '@/store/locale'
 import { useLabels } from '@/lib/labels'
 import { Button } from '@/components/ui/button'
+import { RefreshButton } from '@/components/layout/RefreshButton'
 
 export function Header() {
   const { dark, toggle } = useThemeStore()
@@ -45,9 +46,23 @@ export function Header() {
           >
             {labels.conflicts}
           </NavLink>
+          <NavLink
+            to="/pulse"
+            className={({ isActive }) =>
+              `px-3 py-1.5 text-sm font-medium transition-colors ${
+                isActive
+                  ? 'text-foreground border-b-2 border-orange-500'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`
+            }
+          >
+            Pulse
+          </NavLink>
         </nav>
       </div>
       <div className="flex items-center gap-2">
+        <RefreshButton />
+        <div className="h-5 w-px bg-border" />
         <Button variant="ghost" size="sm" onClick={toggleLang} className="text-muted-foreground">
           {lang === 'en' ? '\u05E2\u05D1' : 'EN'}
         </Button>
